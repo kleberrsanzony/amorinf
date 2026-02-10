@@ -34,21 +34,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     // In-memory mirror of current chat for persistence
     let currentSessionMessages = [];
 
-    // State - Webhook ofuscado (lógica do PROMPTXV2 que funciona)
-    const _w = ['aHR0cHM6Ly9jbGVhbnBpZy1uOG4uY2xvdWRmeS5saXZlLw==', 'd2ViaG9vay9oYWhhaDM5M2RtaGFzaA=='];
-    const _getW = () => atob(_w[0]) + atob(_w[1]);
-    const SECRET_SALT = atob('UFgtVjMtSEFORFNIQUtFLUAjJA==');
-    const SCRAMBLE_KEY = atob('UFJPTVBUWC1MT0NLRUQtOTk=');
+    // ============================================
+    // CONSTANTES DE OFUSCAÇÃO (Do PromptX)
+    // ============================================
+    const WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxlo';
+    const SECRET_SALT = 'PX-V3-HANDSHAKE-@#$';
+    const SCRAMBLE_KEY = 'PROMPTX-LOCKED-99';
+    const HWID = 'LOVABLE-EXTENSION-CLIENT';
+    const LICENSE_KEY = 'FREE';
+
+    // Função Scrambler (XOR com chave)
+    function scramble(s, k) {
+        return s.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ k.charCodeAt(i % k.length))).join('');
+    }
+
+    // Função para ofuscar payload
+    function ofuscatePayload(payload) {
+        const jsonStr = unescape(encodeURIComponent(JSON.stringify(payload)));
+        const packed = btoa(scramble(jsonStr, SCRAMBLE_KEY));
+        return packed;
+    }
 
     let config = {
-        webhookUrl: _getW(),
+        webhookUrl: WEBHOOK_URL,
         token: '',
         projectId: ''
     };
 
     // Load saved settings and captured token from background
     const stored = await chrome.storage.local.get(['lovable_token', 'licenseKey', 'deviceFingerprint']);
-    const HWID = stored.deviceFingerprint || 'PX-EXT-CLIENT';
 
     if (stored.lovable_token) {
         config.token = stored.lovable_token;
@@ -465,22 +479,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearFile();
 
         try {
+            // Criar payload básico como o PromptX
             const timeRef = Math.floor(Date.now() / 60000);
-            const signature = btoa(timeRef + SECRET_SALT + stored.licenseKey + HWID).slice(0, 20);
-
+            const signature = btoa(timeRef + SECRET_SALT + LICENSE_KEY + HWID).slice(0, 20);
             const basicPayload = {
                 message: text,
-                projectId: config.projectId,
                 token: config.token,
-                source: 'PX-EXT',
-                license: stored.licenseKey,
+                projectId: config.projectId,
+                url: window.location.href,
+                source: 'LOVABLE-EXTENSION',
+                license: LICENSE_KEY,
                 hwid: HWID,
                 signature: signature
             };
 
-            const scramble = (s, k) => s.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ k.charCodeAt(i % k.length))).join('');
-            const jsonStr = unescape(encodeURIComponent(JSON.stringify(basicPayload)));
-            const packed = btoa(scramble(jsonStr, SCRAMBLE_KEY));
+            // Ofuscar o payload
+            const packed = ofuscatePayload(basicPayload);
 
             chrome.runtime.sendMessage({
                 action: "sendWebhookWithFile",
