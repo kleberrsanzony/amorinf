@@ -236,11 +236,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             try {
                 let body;
                 let headers = {};
-                if (request.file) {
-                    const res = await fetch(request.file.data);
-                    const blob = await res.blob();
+                // Suporta múltiplos arquivos (request.files) e legado (request.file)
+                const files = request.files || (request.file ? [request.file] : null);
+                if (files && files.length > 0) {
                     const formData = new FormData();
-                    formData.append('file', blob, request.file.name);
+                    for (let i = 0; i < files.length; i++) {
+                        const f = files[i];
+                        const res = await fetch(f.data);
+                        const blob = await res.blob();
+                        // Primeiro arquivo usa 'file', adicionais usam 'file_N'
+                        const fieldName = i === 0 ? 'file' : `file_${i + 1}`;
+                        formData.append(fieldName, blob, f.name);
+                    }
                     for (const key in request.payload) {
                         formData.append(key, request.payload[key]);
                     }
@@ -290,6 +297,280 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch((error) => {
                 sendResponse({ success: false, error: error.message });
             });
+        return true;
+    }
+
+    // Download da página como HTML - captura o preview renderizado com CSS e imagens
+    if (request.action === "downloadAsHTML") {
+        const tabId = request.tabId;
+        const projectId = (request.projectId || '').trim();
+
+        if (!tabId) {
+            sendResponse({ success: false, error: 'Tab não identificada.' });
+            return false;
+        }
+
+        (async () => {
+            try {
+                // Injeta script de captura em TODOS os frames da aba
+                const results = await chrome.scripting.executeScript({
+                    target: { tabId: tabId, allFrames: true },
+                    func: function() {
+                        // --- Esta função roda DENTRO de cada frame ---
+                        // Ignora a página principal do Lovable
+                        if (location.hostname.includes('lovable.dev')) return null;
+                        // Ignora frames minúsculos (trackers, ads)
+                        if (!document.body || document.body.scrollWidth < 200 || document.body.scrollHeight < 200) return null;
+
+                        const result = {
+                            isPreview: true,
+                            bodySize: document.body.innerHTML.length,
+                            images: [],
+                            cssText: '',
+                            html: '',
+                            title: document.title || 'Página'
+                        };
+
+                        // 1. Coletar CSS de todas as stylesheets acessíveis
+                        const allCSS = [];
+                        const capturedHrefs = new Set();
+                        try {
+                            for (let i = 0; i < document.styleSheets.length; i++) {
+                                try {
+                                    const sheet = document.styleSheets[i];
+                                    const rules = sheet.cssRules || sheet.rules;
+                                    let css = '';
+                                    for (let j = 0; j < rules.length; j++) {
+                                        css += rules[j].cssText + '\n';
+                                    }
+                                    allCSS.push(css);
+                                    if (sheet.href) capturedHrefs.add(sheet.href);
+                                } catch (e) {
+                                    // Cross-origin stylesheet - será mantida como <link>
+                                }
+                            }
+                        } catch (e) {}
+                        // Combinar CSS e remover regras do badge Lovable
+                        var combinedCSS = allCSS.join('\n');
+                        combinedCSS = combinedCSS.replace(/\/\*[^*]*lovable[^*]*\*\//gi, '');
+                        result.cssText = combinedCSS;
+
+                        // 2. Coletar imagens como data URLs via canvas
+                        const imgAttrMap = {};
+                        let imgCounter = 0;
+                        try {
+                            const imgs = document.querySelectorAll('img[src]');
+                            for (const img of imgs) {
+                                const srcAttr = img.getAttribute('src');
+                                if (!srcAttr || srcAttr.startsWith('data:') || imgAttrMap[srcAttr]) continue;
+                                try {
+                                    const c = document.createElement('canvas');
+                                    const w = img.naturalWidth || img.width;
+                                    const h = img.naturalHeight || img.height;
+                                    if (!w || !h || w <= 0 || h <= 0) continue;
+                                    c.width = w;
+                                    c.height = h;
+                                    const ctx = c.getContext('2d');
+                                    ctx.drawImage(img, 0, 0);
+                                    const isPNG = /\.(png|svg|gif|webp)/i.test(srcAttr);
+                                    const ext = isPNG ? 'png' : 'jpg';
+                                    const mime = isPNG ? 'image/png' : 'image/jpeg';
+                                    const dataUrl = c.toDataURL(mime, 0.92);
+                                    imgCounter++;
+                                    const filename = 'img_' + imgCounter + '.' + ext;
+                                    imgAttrMap[srcAttr] = filename;
+                                    result.images.push({ filename: filename, dataUrl: dataUrl });
+                                } catch (e) {
+                                    // Canvas tainted (cross-origin) - mantém src original
+                                }
+                            }
+                        } catch (e) {}
+
+                        // 3. Coletar imagens que são data URLs inline (já embutidas)
+                        try {
+                            const inlineImgs = document.querySelectorAll('img[src^="data:"]');
+                            for (const img of inlineImgs) {
+                                const srcAttr = img.getAttribute('src');
+                                if (imgAttrMap[srcAttr]) continue;
+                                imgCounter++;
+                                const isPN = srcAttr.startsWith('data:image/png');
+                                const ext = isPN ? 'png' : 'jpg';
+                                const filename = 'img_' + imgCounter + '.' + ext;
+                                imgAttrMap[srcAttr] = filename;
+                                result.images.push({ filename: filename, dataUrl: srcAttr });
+                            }
+                        } catch (e) {}
+
+                        // 4. Construir HTML limpo
+                        const clone = document.documentElement.cloneNode(true);
+
+                        // Remover badge/branding do Lovable (badge flutuante, links, atribuição)
+                        var badgeSelectors = [
+                            '[id*="lovable"]', '[class*="lovable"]',
+                            '[id*="Lovable"]', '[class*="Lovable"]',
+                            '[data-testid*="lovable"]',
+                            'a[href*="lovable.dev"]',
+                            '[id*="gptengineer"]', '[class*="gptengineer"]',
+                            'a[href*="gptengineer"]',
+                            '[id*="gpt-engineer"]', '[class*="gpt-engineer"]'
+                        ];
+                        badgeSelectors.forEach(function(sel) {
+                            try {
+                                clone.querySelectorAll(sel).forEach(function(el) {
+                                    el.remove();
+                                });
+                            } catch(e) {}
+                        });
+
+                        // Remover meta tags do Lovable
+                        clone.querySelectorAll('meta[name="author"][content*="Lovable"]').forEach(function(el) { el.remove(); });
+                        clone.querySelectorAll('meta[name="author"][content*="lovable"]').forEach(function(el) { el.remove(); });
+                        clone.querySelectorAll('meta[property="og:image"][content*="lovable.dev"]').forEach(function(el) { el.remove(); });
+
+                        // Limpar título se tiver "Lovable"
+                        var titleEl = clone.querySelector('title');
+                        if (titleEl && /lovable/i.test(titleEl.textContent)) {
+                            titleEl.textContent = titleEl.textContent.replace(/\s*[-–|]\s*Lovable.*/i, '').replace(/Lovable\s*[-–|]\s*/i, '') || 'My App';
+                        }
+
+                        // Remover stylesheets que foram capturadas
+                        clone.querySelectorAll('link[rel="stylesheet"]').forEach(function(el) {
+                            const href = el.getAttribute('href');
+                            // Manter links externos (Google Fonts etc.) que não foram capturados
+                            if (href) {
+                                let fullHref = href;
+                                try { fullHref = new URL(href, location.href).href; } catch(e) {}
+                                if (capturedHrefs.has(fullHref)) {
+                                    el.remove();
+                                }
+                                // Manter links que não conseguimos capturar (cross-origin)
+                            } else {
+                                el.remove();
+                            }
+                        });
+
+                        // Remover <style> tags inline (vamos substituir por CSS combinado)
+                        clone.querySelectorAll('style').forEach(function(el) { el.remove(); });
+
+                        // Adicionar CSS combinado
+                        const head = clone.querySelector('head');
+                        if (head && result.cssText) {
+                            const styleEl = document.createElement('style');
+                            styleEl.textContent = result.cssText;
+                            head.appendChild(styleEl);
+                        }
+
+                        // Substituir src das imagens por caminhos locais
+                        clone.querySelectorAll('img[src]').forEach(function(img) {
+                            const srcAttr = img.getAttribute('src');
+                            if (imgAttrMap[srcAttr]) {
+                                img.setAttribute('src', 'images/' + imgAttrMap[srcAttr]);
+                            }
+                        });
+
+                        // Remover scripts externos (geralmente não funcionam offline)
+                        clone.querySelectorAll('script[src]').forEach(function(el) { el.remove(); });
+
+                        result.html = '<!DOCTYPE html>\n' + clone.outerHTML;
+
+                        return result;
+                    }
+                });
+
+                // Encontrar o resultado do frame de preview (o maior que não é lovable.dev)
+                let capturedData = null;
+                for (const r of results) {
+                    if (r.result && r.result.isPreview) {
+                        if (!capturedData || r.result.bodySize > capturedData.bodySize) {
+                            capturedData = r.result;
+                        }
+                    }
+                }
+
+                if (!capturedData || !capturedData.html) {
+                    sendResponse({ success: false, error: 'Preview não encontrado. Certifique-se de que o preview está visível.' });
+                    return;
+                }
+
+                // Montar arquivos do ZIP
+                const zipFiles = [];
+
+                // index.html
+                zipFiles.push({
+                    name: 'index.html',
+                    content: new TextEncoder().encode(capturedData.html)
+                });
+
+                // CSS combinado em arquivo separado também
+                if (capturedData.cssText) {
+                    zipFiles.push({
+                        name: 'css/styles.css',
+                        content: new TextEncoder().encode(capturedData.cssText)
+                    });
+                }
+
+                // Imagens
+                for (const img of capturedData.images) {
+                    try {
+                        const res = await fetch(img.dataUrl);
+                        const blob = await res.blob();
+                        const buffer = await blob.arrayBuffer();
+                        zipFiles.push({
+                            name: 'images/' + img.filename,
+                            content: new Uint8Array(buffer)
+                        });
+                    } catch (e) {
+                        // Falha ao processar imagem, pular
+                    }
+                }
+
+                if (zipFiles.length === 0) {
+                    sendResponse({ success: false, error: 'Nenhum conteúdo capturado.' });
+                    return;
+                }
+
+                // Criar ZIP
+                const zipData = await ZipUtils.createZip(zipFiles);
+
+                // Converter para data URL
+                let binary = '';
+                for (let i = 0; i < zipData.length; i++) {
+                    binary += String.fromCharCode(zipData[i]);
+                }
+                const base64 = btoa(binary);
+                const dataUrl = 'data:application/zip;base64,' + base64;
+
+                // Nome do arquivo
+                const now = new Date();
+                const timestamp = now.getFullYear().toString() +
+                    (now.getMonth() + 1).toString().padStart(2, '0') +
+                    now.getDate().toString().padStart(2, '0') + '-' +
+                    now.getHours().toString().padStart(2, '0') +
+                    now.getMinutes().toString().padStart(2, '0');
+                const slug = projectId ? projectId.slice(0, 8) : 'page';
+                const filename = 'html-page-' + slug + '-' + timestamp + '.zip';
+
+                chrome.downloads.download({
+                    url: dataUrl,
+                    filename: filename,
+                    saveAs: true
+                }, (downloadId) => {
+                    if (chrome.runtime.lastError) {
+                        sendResponse({ success: false, error: 'Erro ao iniciar download.' });
+                    } else {
+                        const imgCount = capturedData.images.length;
+                        sendResponse({
+                            success: true,
+                            message: 'Download iniciado! ' + zipFiles.length + ' arquivos (HTML + CSS + ' + imgCount + ' imagens).'
+                        });
+                    }
+                });
+
+            } catch (error) {
+                sendResponse({ success: false, error: 'Erro ao capturar página: ' + (error.message || 'desconhecido') });
+            }
+        })();
+
         return true;
     }
 

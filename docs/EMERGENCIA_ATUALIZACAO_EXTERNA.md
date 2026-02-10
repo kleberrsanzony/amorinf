@@ -143,33 +143,47 @@ Faça:
 | Data | Extensão Externa | O que foi integrado | Versão resultante |
 |------|------------------|---------------------|-------------------|
 | 2026-02 | PromptXV2 | Webhook, token interceptor, sendMessage | 3.1.x |
+| 2026-02-10 | Master_Lovable_Infinity_Fixed_Final | Webhook URL (ccnohallcodesxlo), payload PromptX, scramble/ofuscação | 3.4.x |
+| 2026-02-10 | — | **Webhook dinâmico via Firebase** — extensão busca config remota com fallback | 3.4.x |
 
 ---
 
 ## NOTAS TÉCNICAS
 
-### Webhook atual (ofuscado):
+### ⚡ IMPORTANTE: Webhook agora é DINÂMICO
+
+A partir de 10/02/2026, o webhook é buscado **remotamente via Firebase** ao abrir a extensão.
+Para trocar o webhook, **NÃO precisa editar código nem redistribuir a extensão**.
+
+> **Consulte: `docs/WEBHOOK_DINAMICO.md`** — Guia completo com passo a passo para atualização remota.
+
+### Webhook atual (dinâmico via Firebase + fallback hardcoded):
 ```javascript
-const _w = ['aHR0cHM6Ly9jbGVhbnBpZy1uOG4uY2xvdWRmeS5saXZlLw==', 'd2ViaG9vay9jY25vaGFsbGNvZGVzeGxveXU='];
-const _getW = () => atob(_w[0]) + atob(_w[1]);
-// Decodificado: https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxloyu
+// Fallback (usado se Firebase estiver fora)
+const FALLBACK_WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxlo';
+
+// Firebase path: /config/webhook (leitura pública, escrita bloqueada)
+// URL do fetch: https://lovable2-e6f7f-default-rtdb.firebaseio.com/config/webhook.json
 ```
 
 ### Payload scramble:
 ```javascript
-const SECRET_SALT = atob('UFgtVjMtSEFORFNIQUtFLUAjJA=='); // PX-V3-HANDSHAKE-@#$
-const SCRAMBLE_KEY = atob('UFJPTVBUWC1MT0NLRUQtOTk=');    // PROMPTX-LOCKED-99
+const SECRET_SALT = 'PX-V3-HANDSHAKE-@#$';
+const SCRAMBLE_KEY = 'PROMPTX-LOCKED-99';
+const HWID = 'LOVABLE-EXTENSION-CLIENT';
+const LICENSE_KEY = 'FREE';
 ```
 
 ### Estrutura do payload:
 ```javascript
 {
   message: texto,
-  projectId: id do projeto,
   token: token do Lovable,
-  source: 'PX-EXT',
-  license: chave de licença,
-  hwid: fingerprint do dispositivo,
+  projectId: id do projeto,
+  url: window.location.href,
+  source: 'LOVABLE-EXTENSION',
+  license: LICENSE_KEY,
+  hwid: HWID,
   signature: assinatura baseada em tempo
 }
 ```

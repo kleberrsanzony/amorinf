@@ -12,7 +12,7 @@
       "maxDuration": 10
     },
     "api/improvePromptSecure.js": {
-      "memory": 256,
+      "memory": 512,
       "maxDuration": 60
     },
     "api/createPanelUser.js": {

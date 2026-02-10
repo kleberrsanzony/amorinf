@@ -14,7 +14,9 @@ const CONFIG = {
     VALIDATE_LICENSE_ENDPOINT: 'https://lovable-infinity-api.vercel.app/api/validateLicense',
     // Endpoints JWT (sessão segura)
     VERIFY_SESSION_ENDPOINT: 'https://lovable-infinity-api.vercel.app/api/verifySession',
-    REFRESH_SESSION_ENDPOINT: 'https://lovable-infinity-api.vercel.app/api/refreshSession'
+    REFRESH_SESSION_ENDPOINT: 'https://lovable-infinity-api.vercel.app/api/refreshSession',
+    // Transcrição de áudio: usa o mesmo endpoint seguro com action=transcribe
+    TRANSCRIBE_AUDIO_ENDPOINT: 'https://lovable-infinity-api.vercel.app/api/improvePromptSecure'
 };
 
 let licenseCache = {};

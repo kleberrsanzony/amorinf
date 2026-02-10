@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Voice Recorder</title>
+<style>body{margin:0;padding:0;background:transparent;}</style>
+</head>
+<body>
+<script>
+/**
+ * Voice Recorder - Página hospedada no Firebase Hosting
+ * Roda em contexto web normal (HTTPS) onde getUserMedia funciona.
+ * Comunicação com a extensão via postMessage.
+ *
+ * Mensagens recebidas (do parent/extensão):
+ *   { action: 'startRecording' }
+ *   { action: 'stopRecording' }
+ *   { action: 'ping' }
+ *
+ * Mensagens enviadas (para o parent/extensão):
+ *   { action: 'recordingStarted' }
+ *   { action: 'recordingComplete', success: true, audio: '<base64>', format: 'webm' }
+ *   { action: 'recordingError', error: '<msg>', needsPermission: bool }
+ *   { action: 'pong' }
+ */
+
+let mediaRecorder = null;
+let audioChunks = [];
+
+window.addEventListener('message', async (event) => {
+    const msg = event.data;
+    if (!msg || !msg.action) return;
+
+    if (msg.action === 'ping') {
+        event.source.postMessage({ action: 'pong' }, '*');
+        return;
+    }
+
+    if (msg.action === 'startRecording') {
+        try {
+            // Parar gravação anterior se existir
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                if (mediaRecorder.stream) mediaRecorder.stream.getTracks().forEach(t => t.stop());
+            }
+
+            audioChunks = [];
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus'
+                : MediaRecorder.isTypeSupported('audio/webm')
+                    ? 'audio/webm'
+                    : '';
+
+            const options = mimeType ? { mimeType } : {};
+            mediaRecorder = new MediaRecorder(stream, options);
+            mediaRecorder.stream = stream; // guardar referência
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                stream.getTracks().forEach(t => t.stop());
+
+                if (audioChunks.length === 0) {
+                    window.parent.postMessage({
+                        action: 'recordingError',
+                        error: 'Nenhum dado de áudio capturado',
+                        needsPermission: false
+                    }, '*');
+                    return;
+                }
+
+                try {
+                    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    const base64 = await blobToBase64(blob);
+                    const format = (mediaRecorder.mimeType || 'audio/webm').includes('webm') ? 'webm' : 'mp3';
+
+                    window.parent.postMessage({
+                        action: 'recordingComplete',
+                        success: true,
+                        audio: base64,
+                        format: format
+                    }, '*');
+                } catch (err) {
+                    window.parent.postMessage({
+                        action: 'recordingError',
+                        error: err.message || 'Erro ao processar áudio',
+                        needsPermission: false
+                    }, '*');
+                }
+            };
+
+            mediaRecorder.start(250);
+            event.source.postMessage({ action: 'recordingStarted' }, '*');
+
+        } catch (err) {
+            const isPermission = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+            event.source.postMessage({
+                action: 'recordingError',
+                error: err.message || 'Erro ao acessar microfone',
+                needsPermission: isPermission
+            }, '*');
+        }
+        return;
+    }
+
+    if (msg.action === 'stopRecording') {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+        }
+        return;
+    }
+});
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+// Avisar o parent que o recorder está pronto
+window.parent.postMessage({ action: 'recorderReady' }, '*');
+</script>
+</body>
+</html>

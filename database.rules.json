@@ -12,6 +12,12 @@
       ".read": "auth != null",
       ".write": false
     },
+    "config": {
+      "webhook": {
+        ".read": true,
+        ".write": false
+      }
+    },
     "extensionRelease": {
       ".read": true,
       ".write": false

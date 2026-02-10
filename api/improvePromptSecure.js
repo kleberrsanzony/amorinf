@@ -1,18 +1,35 @@
 /**
- * Vercel Serverless Function: Melhorador de prompt SEGURO (JWT obrigatório)
+ * Vercel Serverless Function: Melhorador de prompt SEGURO + Transcrição de Áudio (JWT obrigatório)
  * Versão protegida do improvePrompt. Só funciona com sessão JWT válida.
  * A extensão nova usa este endpoint. A antiga continua chamando /api/improvePrompt (armadilha).
  *
- * Env no Vercel: OPENROUTER_API_KEY + JWT_SECRET
+ * Env no Vercel: OPENROUTER_API_KEY + OPENROUTER_VOICE_API_KEY + JWT_SECRET
+ *
+ * === Melhorar Prompt ===
  * POST body: { "text": "prompt do usuário" }
  * Header: Authorization: Bearer <sessionToken>
  * Resposta: JSON { text: "..." } ou stream SSE
+ *
+ * === Transcrever Áudio ===
+ * POST body: { "action": "transcribe", "audio": "<base64>", "format": "webm" }
+ * Header: Authorization: Bearer <sessionToken>
+ * Resposta: JSON { text: "texto transcrito" }
  */
 
 const { requireSession } = require('./_lib/sessionManager');
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_MODEL = 'stepfun/step-3.5-flash:free';
+const OPENROUTER_VOICE_MODEL = 'google/gemini-2.5-flash';
+
+const TRANSCRIPTION_PROMPT = `You are a precise speech-to-text transcription assistant. Your ONLY task is to transcribe the audio provided into text. Rules:
+1. Output ONLY the transcribed text, nothing else.
+2. Do NOT add any commentary, explanation, or formatting.
+3. Preserve the original language of the speech (detect automatically).
+4. If the audio is in Portuguese, transcribe in Portuguese.
+5. If the audio is unclear or empty, respond with an empty string.
+6. Do NOT translate - transcribe exactly what is said.
+7. Use proper punctuation and capitalization.`;
 
 const SYSTEM_PROMPT = `You are an ELITE PROMPT ARCHITECT for Lovable development. Your role is to transform user requests into comprehensive, actionable prompts that generate beautiful, elegant, and highly functional applications.
 DETECTION AND ADAPTATION
@@ -90,15 +107,126 @@ module.exports = async function handler(req, res) {
     return res.status(auth.status).json({ error: auth.message });
   }
 
-  let text = '';
-  let wantStream = true;
+  let body = {};
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
-    text = (body.text != null ? String(body.text) : '').trim();
-    if (body.stream === false) wantStream = false;
+    body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
   } catch (_) {
     return res.status(400).json({ error: 'Body JSON inválido' });
   }
+
+  // ============================================
+  // ROTA: TRANSCRIÇÃO DE ÁUDIO (action=transcribe)
+  // ============================================
+  if (body.action === 'transcribe') {
+    return handleTranscribeAudio(body, res);
+  }
+
+  // ============================================
+  // ROTA PADRÃO: MELHORAR PROMPT
+  // ============================================
+  return handleImprovePrompt(body, res);
+}
+
+// ============================================
+// Handler: Transcrição de Áudio via Gemini
+// ============================================
+async function handleTranscribeAudio(body, res) {
+  const audioData = (body.audio || '').trim();
+  const audioFormat = (body.format || 'webm').trim().toLowerCase();
+
+  if (!audioData) {
+    return res.status(400).json({ error: "Campo 'audio' (base64) é obrigatório" });
+  }
+
+  // Limitar tamanho do áudio (~10MB em base64)
+  if (audioData.length > 10 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Áudio muito grande. Máximo ~7.5MB.' });
+  }
+
+  // Chave API dedicada para voz (fallback para a geral)
+  const apiKey = (
+    process.env.OPENROUTER_VOICE_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    ''
+  ).trim();
+
+  if (!apiKey) {
+    return res.status(500).json({ error: 'OPENROUTER_VOICE_API_KEY não configurada no Vercel.' });
+  }
+
+  const API_TIMEOUT_MS = 60000; // 60s para áudio
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://lovable-infinity-api.vercel.app',
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_VOICE_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: TRANSCRIPTION_PROMPT,
+              },
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: audioData,
+                  format: audioFormat,
+                },
+              },
+            ],
+          },
+        ],
+        stream: false,
+        max_tokens: 4096,
+        temperature: 0.1,
+      }),
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      const errMsg = errData.error?.message || errData.message || response.statusText;
+      return res.status(response.status).json({ error: `OpenRouter: ${errMsg}` });
+    }
+
+    const json = await response.json();
+    const apiError = json.error?.message ?? json.error ?? json.message;
+    if (apiError) {
+      return res.status(502).json({ error: `OpenRouter: ${apiError}` });
+    }
+
+    const choice = json.choices?.[0];
+    const message = choice?.message ?? choice?.delta ?? {};
+    const rawContent = message.content ?? message.text ?? choice?.text ?? '';
+    const fullText = extractTextFromContent(rawContent);
+
+    return res.status(200).json({ text: fullText });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Transcrição demorou demais. Tente um áudio mais curto.' });
+    }
+    return res.status(500).json({ error: 'Falha ao transcrever: ' + (err.message || 'erro desconhecido') });
+  }
+}
+
+// ============================================
+// Handler: Melhorar Prompt via IA
+// ============================================
+async function handleImprovePrompt(body, res) {
+  const text = (body.text != null ? String(body.text) : '').trim();
+  const wantStream = body.stream !== false;
 
   if (!text) {
     return res.status(400).json({ error: "Campo 'text' é obrigatório" });

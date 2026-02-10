@@ -26,6 +26,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const filePreviewContainer = document.getElementById('file-preview-container');
     const screenshotBtn = document.getElementById('screenshot-btn');
     const downloadProjectBtn = document.getElementById('download-project-btn');
+    const downloadHtmlBtn = document.getElementById('download-html-btn');
+    const voiceBtn = document.getElementById('voice-btn');
 
     // Storage key for chat per project
     const CHAT_STORAGE_KEY = 'lovable_infinity_chat';
@@ -35,13 +37,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentSessionMessages = [];
 
     // ============================================
-    // CONSTANTES DE OFUSCAÇÃO (Do PromptX)
+    // CONSTANTES DE OFUSCAÇÃO (Do PromptX) - FALLBACK
     // ============================================
-    const WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxlo';
-    const SECRET_SALT = 'PX-V3-HANDSHAKE-@#$';
-    const SCRAMBLE_KEY = 'PROMPTX-LOCKED-99';
+    const FALLBACK_WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxlo';
+    const FALLBACK_SALT = 'PX-V3-HANDSHAKE-@#$';
+    const FALLBACK_SCRAMBLE = 'PROMPTX-LOCKED-99';
     const HWID = 'LOVABLE-EXTENSION-CLIENT';
     const LICENSE_KEY = 'FREE';
+
+    // Buscar config do webhook do backend (atualização remota)
+    // Se falhar, usa os valores hardcoded como fallback seguro
+    let WEBHOOK_URL = FALLBACK_WEBHOOK_URL;
+    let SECRET_SALT = FALLBACK_SALT;
+    let SCRAMBLE_KEY = FALLBACK_SCRAMBLE;
+
+    try {
+        const cfgResp = await fetch('https://lovable2-e6f7f-default-rtdb.firebaseio.com/config/webhook.json');
+        if (cfgResp.ok) {
+            const cfgData = await cfgResp.json();
+            if (cfgData && cfgData.url) WEBHOOK_URL = cfgData.url;
+            if (cfgData && cfgData.salt) SECRET_SALT = cfgData.salt;
+            if (cfgData && cfgData.scramble) SCRAMBLE_KEY = cfgData.scramble;
+        }
+    } catch (_) {
+        // Falha silenciosa - usa fallback hardcoded
+    }
 
     // Função Scrambler (XOR com chave)
     function scramble(s, k) {
@@ -323,92 +343,162 @@ document.addEventListener('DOMContentLoaded', async () => {
         addMessage(text, 'system');
     }
 
-    // Create hidden file input
+    // Create hidden file input (aceita imagens, vídeos e arquivos comuns)
+    const MAX_ATTACHMENTS = 10;
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = 'image/*';
+    fileInput.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.json,.zip,.rar,.7z,.html,.css,.js,.ts,.py,.md';
+    fileInput.multiple = true;
     fileInput.style.display = 'none';
     document.body.appendChild(fileInput);
 
-    let currentAttachedFile = null;
+    let attachedFiles = [];
 
     attachBtn.addEventListener('click', () => {
+        if (attachedFiles.length >= MAX_ATTACHMENTS) {
+            addSystemMessage(`Máximo de ${MAX_ATTACHMENTS} anexos atingido.`);
+            return;
+        }
         fileInput.click();
     });
 
     // Helper: Update Send Button State
     function updateSendButtonState() {
         const hasText = messageInput.value.trim().length > 0;
-        const hasFile = !!currentAttachedFile;
-        if (hasText || hasFile) {
+        const hasFiles = attachedFiles.length > 0;
+        if (hasText || hasFiles) {
             sendBtn.removeAttribute('disabled');
         } else {
             sendBtn.setAttribute('disabled', 'true');
         }
     }
 
-    function showPreviewForFile(file, dataUrl = null) {
-        if (!file && !dataUrl) return;
-        filePreviewContainer.style.display = 'flex';
+    // Helpers de tipo de arquivo
+    function getFileCategory(file) {
+        if (!file || !file.type) return 'file';
+        if (file.type.startsWith('image/')) return 'image';
+        if (file.type.startsWith('video/')) return 'video';
+        return 'file';
+    }
+
+    function getFileIcon(file) {
+        const cat = getFileCategory(file);
+        if (cat === 'video') return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Renderizar todos os previews do array attachedFiles
+    function renderAttachmentPreviews() {
         filePreviewContainer.innerHTML = '';
-        
-        const isImage = file ? file.type.startsWith('image/') : !!dataUrl;
-        const chip = document.createElement('div');
-        chip.className = 'file-preview-chip' + (isImage ? ' has-thumbnail' : '');
-        
-        if (isImage) {
-            // Cria miniatura da imagem
-            const thumbnail = document.createElement('div');
-            thumbnail.className = 'file-thumbnail';
-            const img = document.createElement('img');
-            
-            if (dataUrl) {
-                img.src = dataUrl;
-            } else {
-                // Lê o arquivo para criar preview
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    img.src = e.target.result;
-                };
-                reader.readAsDataURL(file);
-            }
-            
-            img.alt = file ? file.name : 'Screenshot';
-            thumbnail.appendChild(img);
-            chip.appendChild(thumbnail);
-        } else {
-            // Ícone de arquivo para não-imagens
-            const iconSpan = document.createElement('span');
-            iconSpan.className = 'file-icon';
-            iconSpan.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-            chip.appendChild(iconSpan);
+        if (attachedFiles.length === 0) {
+            filePreviewContainer.style.display = 'none';
+            attachBtn.classList.remove('active');
+            return;
         }
-        
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'file-name';
-        nameSpan.textContent = file ? file.name : 'Screenshot do preview';
-        chip.appendChild(nameSpan);
-        
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'remove-file-btn';
-        removeBtn.title = 'Remover';
-        removeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-        removeBtn.addEventListener('click', () => {
-            clearFile();
-        });
-        chip.appendChild(removeBtn);
-        
-        filePreviewContainer.appendChild(chip);
+        filePreviewContainer.style.display = 'flex';
         attachBtn.classList.add('active');
+
+        attachedFiles.forEach((entry, idx) => {
+            const { file, dataUrl } = entry;
+            const cat = getFileCategory(file);
+            const chip = document.createElement('div');
+            chip.className = 'file-preview-chip' + (cat === 'image' ? ' has-thumbnail' : cat === 'video' ? ' has-thumbnail video-thumb' : '');
+
+            if (cat === 'image') {
+                const thumbnail = document.createElement('div');
+                thumbnail.className = 'file-thumbnail';
+                const img = document.createElement('img');
+                if (dataUrl) {
+                    img.src = dataUrl;
+                } else {
+                    const reader = new FileReader();
+                    reader.onload = (e) => { img.src = e.target.result; };
+                    reader.readAsDataURL(file);
+                }
+                img.alt = file ? file.name : 'Screenshot';
+                thumbnail.appendChild(img);
+                chip.appendChild(thumbnail);
+            } else if (cat === 'video') {
+                const thumbnail = document.createElement('div');
+                thumbnail.className = 'file-thumbnail video-icon-wrap';
+                thumbnail.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+                chip.appendChild(thumbnail);
+            } else {
+                const iconSpan = document.createElement('span');
+                iconSpan.className = 'file-icon';
+                iconSpan.innerHTML = getFileIcon(file);
+                chip.appendChild(iconSpan);
+            }
+
+            const infoWrap = document.createElement('div');
+            infoWrap.className = 'file-info';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'file-name';
+            nameSpan.textContent = file ? file.name : 'Screenshot do preview';
+            infoWrap.appendChild(nameSpan);
+            if (file && file.size) {
+                const sizeSpan = document.createElement('span');
+                sizeSpan.className = 'file-size';
+                sizeSpan.textContent = formatFileSize(file.size);
+                infoWrap.appendChild(sizeSpan);
+            }
+            chip.appendChild(infoWrap);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-file-btn';
+            removeBtn.title = 'Remover';
+            removeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            removeBtn.addEventListener('click', () => {
+                removeAttachment(idx);
+            });
+            chip.appendChild(removeBtn);
+
+            filePreviewContainer.appendChild(chip);
+        });
+
+        // Contador se tiver mais de 1
+        if (attachedFiles.length > 1) {
+            const counter = document.createElement('div');
+            counter.className = 'file-counter';
+            counter.textContent = `${attachedFiles.length}/${MAX_ATTACHMENTS} anexos`;
+            filePreviewContainer.appendChild(counter);
+        }
+
         messageInput.focus();
+    }
+
+    function addAttachment(file, dataUrl = null) {
+        if (attachedFiles.length >= MAX_ATTACHMENTS) {
+            addSystemMessage(`Máximo de ${MAX_ATTACHMENTS} anexos atingido.`);
+            return;
+        }
+        attachedFiles.push({ file, dataUrl });
+        renderAttachmentPreviews();
+        updateSendButtonState();
+    }
+
+    function removeAttachment(index) {
+        attachedFiles.splice(index, 1);
+        renderAttachmentPreviews();
+        updateSendButtonState();
     }
 
     fileInput.addEventListener('change', () => {
         if (fileInput.files.length > 0) {
-            currentAttachedFile = fileInput.files[0];
-            showPreviewForFile(currentAttachedFile);
+            const remaining = MAX_ATTACHMENTS - attachedFiles.length;
+            const filesToAdd = Array.from(fileInput.files).slice(0, remaining);
+            filesToAdd.forEach(f => addAttachment(f));
+            if (fileInput.files.length > remaining) {
+                addSystemMessage(`Apenas ${remaining} arquivo(s) adicionado(s). Limite de ${MAX_ATTACHMENTS} atingido.`);
+            }
         }
-        updateSendButtonState();
+        fileInput.value = '';
     });
 
     // Colar imagem (Ctrl+V)
@@ -417,22 +507,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!items) return;
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
+            if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) {
                 e.preventDefault();
                 const blob = item.getAsFile();
                 if (!blob) return;
-                const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' || blob.type === 'image/jpg' ? 'jpg' : 'png';
-                currentAttachedFile = new File([blob], `imagem-colada.${ext}`, { type: blob.type });
-                fileInput.value = '';
-                showPreviewForFile(currentAttachedFile);
-                updateSendButtonState();
+                const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' || blob.type === 'image/jpg' ? 'jpg' : blob.type.split('/')[1] || 'png';
+                const pastedFile = new File([blob], `colado-${Date.now()}.${ext}`, { type: blob.type });
+                addAttachment(pastedFile);
                 return;
             }
         }
     });
 
     function clearFile() {
-        currentAttachedFile = null;
+        attachedFiles = [];
         fileInput.value = '';
         filePreviewContainer.style.display = 'none';
         attachBtn.classList.remove('active');
@@ -442,9 +530,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Envio de mensagem (lógica do PROMPTXV2 que funciona)
     async function sendMessage() {
         const text = messageInput.value.trim();
-        const file = currentAttachedFile;
+        const files = [...attachedFiles];
 
-        if (!text && !file) return;
+        if (!text && files.length === 0) return;
 
         if (!config.token) {
             const freshStore = await chrome.storage.local.get(['lovable_token']);
@@ -461,19 +549,35 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        addMessage(text + (file ? ` [Imagem]` : ''), 'user');
+        // Montar indicador de anexos na mensagem do user
+        let attachLabel = '';
+        if (files.length > 0) {
+            const imgs = files.filter(f => getFileCategory(f.file) === 'image').length;
+            const vids = files.filter(f => getFileCategory(f.file) === 'video').length;
+            const docs = files.length - imgs - vids;
+            const parts = [];
+            if (imgs > 0) parts.push(`${imgs} imagem${imgs > 1 ? 'ns' : ''}`);
+            if (vids > 0) parts.push(`${vids} vídeo${vids > 1 ? 's' : ''}`);
+            if (docs > 0) parts.push(`${docs} arquivo${docs > 1 ? 's' : ''}`);
+            attachLabel = ` [${parts.join(', ')}]`;
+        }
+
+        addMessage(text + attachLabel, 'user');
         messageInput.value = '';
         messageInput.style.height = 'auto';
         updateSendButtonState();
 
-        let fileData = null;
-        if (file) {
-            fileData = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result });
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
+        // Converter todos os arquivos para dataURL
+        let filesData = null;
+        if (files.length > 0) {
+            filesData = await Promise.all(files.map(entry => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({ name: entry.file.name, type: entry.file.type, data: reader.result });
+                    reader.onerror = reject;
+                    reader.readAsDataURL(entry.file);
+                });
+            }));
         }
 
         clearFile();
@@ -500,7 +604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 action: "sendWebhookWithFile",
                 url: config.webhookUrl,
                 payload: { p: packed },
-                file: fileData
+                files: filesData
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     addSystemMessage("Erro: " + chrome.runtime.lastError.message);
@@ -569,14 +673,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
 
                 if (response && response.success && response.dataUrl) {
-                    // Converte dataUrl para File
+                    // Converte dataUrl para File e adiciona ao array de anexos
                     const res = await fetch(response.dataUrl);
                     const blob = await res.blob();
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                    currentAttachedFile = new File([blob], `preview-${timestamp}.png`, { type: 'image/png' });
+                    const screenshotFile = new File([blob], `preview-${timestamp}.png`, { type: 'image/png' });
                     
-                    showPreviewForFile(currentAttachedFile, response.dataUrl);
-                    updateSendButtonState();
+                    addAttachment(screenshotFile, response.dataUrl);
                     addSystemMessage('Screenshot capturado! Envie com sua mensagem.');
                 } else {
                     addSystemMessage(response?.error || 'Não foi possível capturar o preview.');
@@ -626,6 +729,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         } finally {
             downloadProjectBtn.disabled = false;
             downloadProjectBtn.classList.remove('loading');
+        }
+    }
+
+    // Download da página como HTML (captura o preview renderizado)
+    async function downloadAsHTML() {
+        await captureData();
+        if (!config.projectId) {
+            addSystemMessage('Abra um projeto no Lovable para capturar a página.');
+            return;
+        }
+
+        if (!downloadHtmlBtn) return;
+        downloadHtmlBtn.disabled = true;
+        downloadHtmlBtn.classList.add('loading');
+        addSystemMessage('Capturando página... aguarde.');
+
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) {
+                addSystemMessage('Não foi possível identificar a aba ativa.');
+                return;
+            }
+
+            const response = await new Promise((resolve) => {
+                chrome.runtime.sendMessage({
+                    action: "downloadAsHTML",
+                    tabId: tab.id,
+                    projectId: config.projectId
+                }, resolve);
+            });
+
+            if (response && response.success) {
+                addSystemMessage(response.message || 'Download da página HTML iniciado!');
+            } else {
+                addSystemMessage(response?.error || 'Erro ao capturar página.');
+            }
+        } catch (e) {
+            addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
+        } finally {
+            downloadHtmlBtn.disabled = false;
+            downloadHtmlBtn.classList.remove('loading');
         }
     }
 
@@ -737,10 +881,206 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // ============================================
+    // DIGITAÇÃO POR VOZ (Speech-to-Text via Gemini)
+    // Grava áudio via content script no lovable.dev (HTTPS)
+    // ============================================
+    if (voiceBtn) {
+        let voiceIsRecording = false;
+        let voiceRecordingTimer = null;
+        let voiceTimerEl = null;
+        let voiceStartTime = 0;
+        const VOICE_MAX_DURATION = 120000; // 2 minutos
+        let voiceAutoStopTimeout = null;
+        let voiceActiveTabId = null;
+
+        function voiceUpdateTimer() {
+            if (!voiceTimerEl) return;
+            const elapsed = Math.floor((Date.now() - voiceStartTime) / 1000);
+            const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+            const secs = String(elapsed % 60).padStart(2, '0');
+            voiceTimerEl.textContent = mins + ':' + secs;
+        }
+
+        function voiceShowTimer() {
+            voiceTimerEl = document.createElement('span');
+            voiceTimerEl.className = 'voice-timer';
+            voiceTimerEl.textContent = '00:00';
+            voiceBtn.appendChild(voiceTimerEl);
+        }
+
+        function voiceHideTimer() {
+            if (voiceTimerEl) {
+                voiceTimerEl.remove();
+                voiceTimerEl = null;
+            }
+        }
+
+        function voiceSetState(state) {
+            voiceBtn.classList.remove('voice-recording', 'voice-processing');
+            voiceBtn.disabled = false;
+            if (state === 'recording') {
+                voiceBtn.classList.add('voice-recording');
+                voiceBtn.title = 'Parar gravação';
+            } else if (state === 'processing') {
+                voiceBtn.classList.add('voice-processing');
+                voiceBtn.disabled = true;
+                voiceBtn.title = 'Transcrevendo...';
+            } else {
+                voiceBtn.title = 'Digitação por voz';
+            }
+        }
+
+        async function voiceGetLovableTab() {
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tab = tabs[0];
+            if (!tab || !tab.url || !tab.url.includes('lovable.dev')) {
+                return null;
+            }
+            return tab;
+        }
+
+        async function voiceStartRecording() {
+            const tab = await voiceGetLovableTab();
+            if (!tab) {
+                addSystemMessage('Abra o Lovable.dev para usar a digitação por voz.');
+                return;
+            }
+            voiceActiveTabId = tab.id;
+
+            try {
+                const result = await chrome.tabs.sendMessage(tab.id, { action: 'voiceStartRecording' });
+                if (!result || !result.success) {
+                    if (result && result.needsPermission) {
+                        addSystemMessage('Permita o acesso ao microfone no popup que apareceu no topo da página do Lovable.');
+                    } else {
+                        addSystemMessage(result?.error || 'Erro ao iniciar gravação.');
+                    }
+                    voiceSetState('idle');
+                    return;
+                }
+
+                voiceIsRecording = true;
+                voiceSetState('recording');
+                voiceStartTime = Date.now();
+                voiceShowTimer();
+                voiceRecordingTimer = setInterval(voiceUpdateTimer, 1000);
+
+                voiceAutoStopTimeout = setTimeout(() => {
+                    if (voiceIsRecording) voiceStopRecording();
+                }, VOICE_MAX_DURATION);
+
+            } catch (err) {
+                addSystemMessage('Erro ao conectar com a página. Recarregue o Lovable.dev e tente novamente.');
+                voiceSetState('idle');
+            }
+        }
+
+        async function voiceStopRecording() {
+            if (!voiceIsRecording) return;
+            voiceIsRecording = false;
+            clearInterval(voiceRecordingTimer);
+            clearTimeout(voiceAutoStopTimeout);
+            voiceHideTimer();
+            voiceSetState('processing');
+            messageInput.readOnly = true;
+            messageInput.classList.add('improving');
+            messageInput.placeholder = 'Transcrevendo áudio...';
+
+            if (voiceActiveTabId) {
+                try {
+                    await chrome.tabs.sendMessage(voiceActiveTabId, { action: 'voiceStopRecording' });
+                } catch (_) {}
+            }
+            // O áudio chega via 'voiceRecordingResult' pelo chrome.runtime.onMessage
+        }
+
+        // Listener para receber o áudio gravado pelo content script
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            if (message.action !== 'voiceRecordingResult') return;
+
+            (async () => {
+                try {
+                    if (!message.success || !message.audio) {
+                        addSystemMessage(message.error || 'Erro na gravação.');
+                        return;
+                    }
+
+                    const endpoint = (typeof CONFIG !== 'undefined' && CONFIG.TRANSCRIBE_AUDIO_ENDPOINT)
+                        ? CONFIG.TRANSCRIBE_AUDIO_ENDPOINT : '';
+                    if (!endpoint) {
+                        addSystemMessage('Endpoint de transcrição não configurado.');
+                        return;
+                    }
+
+                    const _sessionToken = typeof getSessionToken === 'function' ? await getSessionToken() : null;
+                    const _headers = { 'Content-Type': 'application/json' };
+                    if (_sessionToken) _headers['Authorization'] = 'Bearer ' + _sessionToken;
+
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: _headers,
+                        body: JSON.stringify({
+                            action: 'transcribe',
+                            audio: message.audio,
+                            format: message.format || 'webm'
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        addSystemMessage(errData.error || response.statusText || 'Erro ao transcrever áudio.');
+                        return;
+                    }
+
+                    const json = await response.json();
+                    if (json.error) {
+                        addSystemMessage(json.error);
+                        return;
+                    }
+
+                    const transcribedText = (json.text || '').trim();
+                    if (transcribedText) {
+                        const current = messageInput.value;
+                        if (current && !current.endsWith(' ') && !current.endsWith('\n')) {
+                            messageInput.value = current + ' ' + transcribedText;
+                        } else {
+                            messageInput.value = current + transcribedText;
+                        }
+                        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        messageInput.scrollTop = messageInput.scrollHeight;
+                        updateSendButtonState();
+                        messageInput.focus();
+                    } else {
+                        addSystemMessage('Nenhuma fala detectada no áudio.');
+                    }
+                } catch (e) {
+                    addSystemMessage('Erro na transcrição: ' + (e.message || 'desconhecido'));
+                } finally {
+                    voiceSetState('idle');
+                    messageInput.readOnly = false;
+                    messageInput.classList.remove('improving');
+                    messageInput.placeholder = 'Enviar mensagem...';
+                }
+            })();
+        });
+
+        voiceBtn.addEventListener('click', () => {
+            if (voiceIsRecording) {
+                voiceStopRecording();
+            } else {
+                voiceStartRecording();
+            }
+        });
+    }
+
     // Event Listeners
     sendBtn.addEventListener('click', sendMessage);
     if (downloadProjectBtn) {
         downloadProjectBtn.addEventListener('click', downloadProject);
+    }
+    if (downloadHtmlBtn) {
+        downloadHtmlBtn.addEventListener('click', downloadAsHTML);
     }
 
     messageInput.addEventListener('keydown', (e) => {
