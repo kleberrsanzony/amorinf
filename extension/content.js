@@ -100,6 +100,120 @@
   });
 })();
 
+// ============================================
+// OCULTADOR: Remove a caixinha "Fix these issues" que aparece no chat
+// quando enviamos uma mensagem no formato error-fix pela extensão.
+// Usa MutationObserver para detectar novas mensagens no DOM.
+// ============================================
+(function setupErrorFixHider() {
+  // Textos que identificam mensagens de error-fix enviadas pela extensão
+  const ERROR_FIX_MARKERS = [
+    'Fix these issues',
+    'fix these issues',
+    'For the code present, I get the error below',
+    'Please think step-by-step in order to resolve it'
+  ];
+
+  function isErrorFixMessage(el) {
+    const text = el.textContent || '';
+    return ERROR_FIX_MARKERS.some(marker => text.includes(marker));
+  }
+
+  function hideErrorFixMessages() {
+    // Busca elementos que contenham os marcadores de error-fix
+    // O Lovable renderiza mensagens do usuário em containers específicos
+    const allMessages = document.querySelectorAll(
+      '[data-testid*="message"], [class*="message"], [class*="Message"], [class*="chat-message"], [class*="ChatMessage"]'
+    );
+
+    allMessages.forEach(msg => {
+      if (isErrorFixMessage(msg) && msg.style.display !== 'none') {
+        // Procura o container pai mais próximo (pode ser o wrapper da mensagem inteira)
+        let target = msg;
+        // Sobe até 3 níveis para pegar o container completo da mensagem
+        for (let i = 0; i < 3; i++) {
+          if (target.parentElement && target.parentElement.children.length <= 2) {
+            target = target.parentElement;
+          } else {
+            break;
+          }
+        }
+        target.style.display = 'none';
+        console.log('[Lovable Infinity] Mensagem error-fix ocultada do chat');
+      }
+    });
+
+    // Fallback: busca genérica por texto "Fix these issues" em botões/containers
+    document.querySelectorAll('button, [role="button"], summary, details').forEach(el => {
+      const text = el.textContent || '';
+      if (text.trim() === 'Fix these issues' || text.trim() === 'Show more') {
+        // Sobe para o container da mensagem
+        let container = el;
+        for (let i = 0; i < 5; i++) {
+          if (container.parentElement) {
+            container = container.parentElement;
+            // Se o container tem um data attribute de mensagem ou parece ser um bloco de mensagem
+            const cls = container.className || '';
+            if (cls.includes('message') || cls.includes('Message') || cls.includes('chat') ||
+                container.getAttribute('data-testid')?.includes('message')) {
+              container.style.display = 'none';
+              console.log('[Lovable Infinity] Container de error-fix ocultado');
+              return;
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Observer que monitora novas mensagens no chat
+  let observerActive = false;
+  function startObserver() {
+    if (observerActive) return;
+    observerActive = true;
+
+    const observer = new MutationObserver((mutations) => {
+      let shouldCheck = false;
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          shouldCheck = true;
+          break;
+        }
+      }
+      if (shouldCheck) {
+        // Pequeno delay para o React terminar de renderizar
+        setTimeout(hideErrorFixMessages, 300);
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    // Verifica mensagens existentes ao iniciar
+    setTimeout(hideErrorFixMessages, 2000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(startObserver, 3000));
+  } else {
+    setTimeout(startObserver, 2000);
+  }
+
+  // Também escuta notificação do background quando uma mensagem error-fix é enviada
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'hideErrorFixMessages') {
+      // Aguarda a mensagem aparecer no DOM e esconde
+      setTimeout(hideErrorFixMessages, 500);
+      setTimeout(hideErrorFixMessages, 1500);
+      setTimeout(hideErrorFixMessages, 3000);
+      setTimeout(hideErrorFixMessages, 5000);
+      sendResponse({ ok: true });
+    }
+  });
+})();
+
 // Listener para mensagens do background/popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 

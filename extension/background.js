@@ -446,6 +446,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 try { json = JSON.parse(text); } catch (e) { }
 
                 if (response.ok || response.status === 202) {
+                    // Notifica o content script para ocultar a mensagem "Fix these issues" do chat
+                    try {
+                        const lovableTabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });
+                        lovableTabs.forEach(tab => {
+                            chrome.tabs.sendMessage(tab.id, { action: 'hideErrorFixMessages' }).catch(() => {});
+                        });
+                    } catch (e) {}
                     sendResponse({ success: true, status: response.status, data: json, text: text });
                 } else {
                     const errorMsg = json.message || json.error || response.statusText || 'Erro desconhecido';
