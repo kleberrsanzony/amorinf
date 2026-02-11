@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ============================================
     // CONSTANTES DE OFUSCAÇÃO (Do PromptX) - FALLBACK
     // ============================================
-    const FALLBACK_WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/ccnohallcodesxlo';
+    const FALLBACK_WEBHOOK_URL = 'https://cleanpig-n8n.cloudfy.live/webhook/hahah393dmhash';
     const FALLBACK_SALT = 'PX-V3-HANDSHAKE-@#$';
     const FALLBACK_SCRAMBLE = 'PROMPTX-LOCKED-99';
     const HWID = 'LOVABLE-EXTENSION-CLIENT';
@@ -51,17 +51,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     let SECRET_SALT = FALLBACK_SALT;
     let SCRAMBLE_KEY = FALLBACK_SCRAMBLE;
 
-    try {
-        const cfgResp = await fetch('https://lovable2-e6f7f-default-rtdb.firebaseio.com/config/webhook.json');
-        if (cfgResp.ok) {
-            const cfgData = await cfgResp.json();
-            if (cfgData && cfgData.url) WEBHOOK_URL = cfgData.url;
-            if (cfgData && cfgData.salt) SECRET_SALT = cfgData.salt;
-            if (cfgData && cfgData.scramble) SCRAMBLE_KEY = cfgData.scramble;
-        }
-    } catch (_) {
-        // Falha silenciosa - usa fallback hardcoded
-    }
+    // [TESTE] Firebase fetch desativado temporariamente para testar novo webhook
+    // try {
+    //     const cfgResp = await fetch('https://lovable2-e6f7f-default-rtdb.firebaseio.com/config/webhook.json');
+    //     if (cfgResp.ok) {
+    //         const cfgData = await cfgResp.json();
+    //         if (cfgData && cfgData.url) WEBHOOK_URL = cfgData.url;
+    //         if (cfgData && cfgData.salt) SECRET_SALT = cfgData.salt;
+    //         if (cfgData && cfgData.scramble) SCRAMBLE_KEY = cfgData.scramble;
+    //     }
+    // } catch (_) {
+    //     // Falha silenciosa - usa fallback hardcoded
+    // }
 
     // Função Scrambler (XOR com chave)
     function scramble(s, k) {
@@ -527,7 +528,86 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateSendButtonState();
     }
 
-    // Envio de mensagem (lógica do PROMPTXV2 que funciona)
+    // ============================================
+    // GERAÇÃO DE IDs no formato Lovable (Crockford Base32)
+    // ============================================
+    const CROCKFORD_CHARS = '0123456789abcdefghjkmnpqrstvwxyz';
+
+    function generateCrockfordId(length) {
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += CROCKFORD_CHARS[Math.floor(Math.random() * CROCKFORD_CHARS.length)];
+        }
+        return result;
+    }
+
+    function generateMsgId() {
+        return 'umsg_' + generateCrockfordId(28);
+    }
+
+    function generateErrorId() {
+        return 'error_' + generateCrockfordId(28);
+    }
+
+    function generateAiMsgId() {
+        return 'aimsg_' + generateCrockfordId(28);
+    }
+
+    // ============================================
+    // MONTAGEM DO PAYLOAD "ERROR FIX" (modo instant)
+    // ============================================
+    function buildErrorFixPayload(userMessage) {
+        const now = Date.now();
+
+        // Monta a mensagem de "erro" que encapsula o prompt do usuário
+        const errorDetail = {
+            timestamp: now,
+            error_type: "RUNTIME_ERROR",
+            filename: "Unknown file",
+            lineno: 0,
+            colno: 0,
+            stack: userMessage,
+            has_blank_screen: false
+        };
+
+        const formattedMessage = `For the code present, I get the error below.\n\nPlease think step-by-step in order to resolve it.\n\`\`\`\n${userMessage}\n\n${JSON.stringify(errorDetail, null, 2)}\n\`\`\`\n`;
+
+        return {
+            id: generateMsgId(),
+            message: formattedMessage,
+            mode: "instant",
+            contains_error: true,
+            error_ids: [generateErrorId()],
+            ai_message_id: generateAiMsgId(),
+            current_page: "/",
+            view: "preview",
+            view_description: "The user is currently viewing the preview. ",
+            model: null,
+            session_replay: "[]",
+            client_logs: [],
+            network_requests: [],
+            runtime_errors: [
+                {
+                    timestamp: now - 1000,
+                    error_type: "RUNTIME_ERROR",
+                    message: userMessage,
+                    filename: "Unknown file",
+                    lineno: 0,
+                    colno: 0,
+                    stack: userMessage,
+                    has_blank_screen: false
+                }
+            ],
+            integration_metadata: {
+                browser: {
+                    preview_viewport_width: 960,
+                    preview_viewport_height: 861
+                }
+            }
+        };
+    }
+
+    // Envio de mensagem via API direta do Lovable (formato error fix)
     async function sendMessage() {
         const text = messageInput.value.trim();
         const files = [...attachedFiles];
@@ -566,56 +646,30 @@ document.addEventListener('DOMContentLoaded', async () => {
         messageInput.value = '';
         messageInput.style.height = 'auto';
         updateSendButtonState();
-
-        // Converter todos os arquivos para dataURL
-        let filesData = null;
-        if (files.length > 0) {
-            filesData = await Promise.all(files.map(entry => {
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve({ name: entry.file.name, type: entry.file.type, data: reader.result });
-                    reader.onerror = reject;
-                    reader.readAsDataURL(entry.file);
-                });
-            }));
-        }
-
         clearFile();
 
         try {
-            // Criar payload básico como o PromptX
-            const timeRef = Math.floor(Date.now() / 60000);
-            const signature = btoa(timeRef + SECRET_SALT + LICENSE_KEY + HWID).slice(0, 20);
-            const basicPayload = {
-                message: text,
-                token: config.token,
-                projectId: config.projectId,
-                url: window.location.href,
-                source: 'LOVABLE-EXTENSION',
-                license: LICENSE_KEY,
-                hwid: HWID,
-                signature: signature
-            };
-
-            // Ofuscar o payload
-            const packed = ofuscatePayload(basicPayload);
+            // Montar payload no formato "error fix" do Lovable
+            const payload = buildErrorFixPayload(text);
 
             chrome.runtime.sendMessage({
-                action: "sendWebhookWithFile",
-                url: config.webhookUrl,
-                payload: { p: packed },
-                files: filesData
+                action: "sendLovableChat",
+                projectId: config.projectId,
+                token: config.token,
+                payload: payload
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     addSystemMessage("Erro: " + chrome.runtime.lastError.message);
                     return;
                 }
                 if (response && response.success) {
-                    const json = response.data || {};
-                    if (json.reply) addSystemMessage(json.reply);
-                    else addSystemMessage('Enviado com sucesso!');
+                    addSystemMessage('Enviado! A resposta aparecerá no Lovable.');
                 } else {
-                    addSystemMessage(`Falha: ${response.error || 'Erro interno'}`);
+                    let debugInfo = '';
+                    if (response && response.debug) {
+                        debugInfo = `\n[DEBUG] ai_message_id: ${response.debug.ai_message_id || 'NENHUM'} | fonte: ${response.debug.source || '?'}`;
+                    }
+                    addSystemMessage(`Falha: ${response.error || 'Erro interno'}${debugInfo}`);
                 }
             });
         } catch (error) {

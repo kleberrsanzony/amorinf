@@ -2,6 +2,104 @@
 // CONTENT SCRIPT - Lovable Infinity
 // ============================================
 
+// ============================================
+// EXTRATOR PASSIVO: Tenta extrair ai_message_id periodicamente
+// Usa injeção via <script> (pode ser bloqueado pelo CSP).
+// O método principal agora é chrome.scripting.executeScript no background.js
+// ============================================
+(function setupAiMsgIdExtractor() {
+  const extractorCode = `(function(){
+    if(window.__lovableAimsgExtractorActive) return;
+    window.__lovableAimsgExtractorActive=true;
+    function extractAiMsgIds(){
+      try{
+        var found=[];
+        var visited=new WeakSet();
+        function searchObj(obj,depth){
+          if(depth>4||!obj||typeof obj!=='object'||found.length>200) return;
+          try{if(visited.has(obj))return;visited.add(obj);}catch(e){return;}
+          try{
+            var keys=Object.keys(obj);
+            for(var i=0;i<keys.length;i++){
+              try{
+                var val=obj[keys[i]];
+                if(typeof val==='string'){
+                  var m=val.match(/aimsg_[a-z0-9]{10,}/g);
+                  if(m) m.forEach(function(id){if(found.indexOf(id)===-1)found.push(id);});
+                }else if(typeof val==='object'&&val!==null){
+                  searchObj(val,depth+1);
+                }
+              }catch(e){}
+            }
+          }catch(e){}
+        }
+        function scanFiber(fiber,d){
+          if(d>60||!fiber||found.length>200) return;
+          try{if(visited.has(fiber))return;visited.add(fiber);}catch(e){return;}
+          if(fiber.memoizedProps) searchObj(fiber.memoizedProps,0);
+          var state=fiber.memoizedState;var sc=0;
+          while(state&&sc<30){
+            if(state.memoizedState!=null){
+              if(typeof state.memoizedState==='string'){
+                var m=state.memoizedState.match(/aimsg_[a-z0-9]{10,}/g);
+                if(m) m.forEach(function(id){if(found.indexOf(id)===-1)found.push(id);});
+              }else if(typeof state.memoizedState==='object'){
+                searchObj(state.memoizedState,0);
+              }
+            }
+            state=state.next;sc++;
+          }
+          if(fiber.child) scanFiber(fiber.child,d+1);
+          if(fiber.sibling) scanFiber(fiber.sibling,d+1);
+        }
+        var allEls=document.querySelectorAll('*');
+        for(var i=0;i<allEls.length;i++){
+          var el=allEls[i];
+          var keys=Object.keys(el);
+          for(var k=0;k<keys.length;k++){
+            if(keys[k].indexOf('__reactFiber')===0||keys[k].indexOf('__reactInternalInstance')===0){
+              scanFiber(el[keys[k]],0);
+              break;
+            }
+          }
+        }
+        if(found.length>0){
+          window.postMessage({type:'LOVABLE_AIMSG_EXTRACTED',ids:found},'*');
+        }
+      }catch(e){}
+    }
+    if(document.readyState==='complete'){extractAiMsgIds();}
+    else{window.addEventListener('load',function(){setTimeout(extractAiMsgIds,3000);});}
+    setInterval(extractAiMsgIds,15000);
+  })();`;
+
+  function injectExtractor() {
+    try {
+      const script = document.createElement('script');
+      script.textContent = extractorCode;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (e) {
+      console.warn('[Lovable Infinity] Falha ao injetar extrator (CSP?):', e.message);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(injectExtractor, 3000));
+  } else {
+    setTimeout(injectExtractor, 2000);
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
+    if (event.data && event.data.type === 'LOVABLE_AIMSG_EXTRACTED' && event.data.ids && event.data.ids.length > 0) {
+      const lastId = event.data.ids[event.data.ids.length - 1];
+      chrome.storage.local.set({ lovable_last_aimsg: lastId });
+      console.log('[Lovable Infinity] ai_message_id extraído via content script:', lastId, '(total:', event.data.ids.length, ')');
+    }
+  });
+})();
+
 // Listener para mensagens do background/popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 

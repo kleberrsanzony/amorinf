@@ -163,7 +163,7 @@ async function ensureContentScriptInjected(tabId) {
     }
 }
 
-// Interceptor de Token via webRequest (Manifest V3)
+// Interceptor de Token + Git SHA via webRequest (Manifest V3)
 chrome.webRequest.onBeforeSendHeaders.addListener(
     (details) => {
         const authHeader = details.requestHeaders.find(
@@ -180,9 +180,38 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
                 });
             }
         }
+        // Captura o X-Client-Git-SHA para uso no envio direto à API
+        const gitShaHeader = details.requestHeaders.find(
+            (header) => header.name.toLowerCase() === 'x-client-git-sha'
+        );
+        if (gitShaHeader && gitShaHeader.value) {
+            chrome.storage.local.set({ lovable_git_sha: gitShaHeader.value });
+        }
     },
     { urls: ["https://api.lovable.dev/*"] },
     ["requestHeaders"]
+);
+
+// Captura ai_message_id de POST /chat que a PRÓPRIA PÁGINA Lovable faz (não a extensão)
+chrome.webRequest.onBeforeRequest.addListener(
+    (details) => {
+        // Só captura de abas reais (tabId > 0 exclui requisições da extensão)
+        if (details.tabId > 0 && details.method === 'POST' && details.url.includes('/chat')) {
+            if (details.requestBody && details.requestBody.raw && details.requestBody.raw.length > 0) {
+                try {
+                    const decoder = new TextDecoder();
+                    const bodyStr = decoder.decode(details.requestBody.raw[0].bytes);
+                    const body = JSON.parse(bodyStr);
+                    if (body.ai_message_id && typeof body.ai_message_id === 'string' && body.ai_message_id.startsWith('aimsg_')) {
+                        chrome.storage.local.set({ lovable_last_aimsg: body.ai_message_id });
+                        console.log('[Lovable Infinity] ai_message_id capturado de POST /chat:', body.ai_message_id);
+                    }
+                } catch (e) { }
+            }
+        }
+    },
+    { urls: ["https://api.lovable.dev/*"] },
+    ["requestBody"]
 );
 
 // Manipulador de mensagens
@@ -197,6 +226,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.storage.local.get(['lovable_token'], (data) => {
             const token = data.lovable_token || null;
             sendResponse({ token });
+        });
+        return true;
+    }
+
+    // Retorna o último ai_message_id capturado
+    if (request.action === "getLastAiMsgId") {
+        chrome.storage.local.get(['lovable_last_aimsg'], (data) => {
+            sendResponse({ ai_message_id: data.lovable_last_aimsg || null });
         });
         return true;
     }
@@ -271,6 +308,155 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }
             } catch (error) {
                 sendResponse({ success: false, error: error.message });
+            }
+        })();
+        return true;
+    }
+
+    // Envio direto à API do Lovable no formato "error fix" (modo instant)
+    if (request.action === "sendLovableChat") {
+        (async () => {
+            try {
+                const { projectId, token, payload } = request;
+                if (!projectId || !token || !payload) {
+                    sendResponse({ success: false, error: 'Dados incompletos para envio.' });
+                    return;
+                }
+
+                // Buscar o Git SHA e o último ai_message_id capturados
+                const stored = await chrome.storage.local.get(['lovable_git_sha', 'lovable_last_aimsg']);
+                const gitSha = stored.lovable_git_sha || '';
+                let aiMsgId = stored.lovable_last_aimsg || null;
+                let aiMsgIdSource = aiMsgId ? 'storage' : 'none';
+
+                // Se não temos ai_message_id no storage, extrair sob demanda da aba do Lovable
+                if (!aiMsgId) {
+                    try {
+                        const tabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });
+                        if (tabs.length > 0) {
+                            const results = await chrome.scripting.executeScript({
+                                target: { tabId: tabs[0].id },
+                                world: 'MAIN',
+                                func: () => {
+                                    // Busca aimsg_ no React fiber tree da página
+                                    var found = [];
+                                    var visited = new WeakSet();
+
+                                    function searchObj(obj, depth) {
+                                        if (depth > 4 || !obj || typeof obj !== 'object' || found.length > 200) return;
+                                        try { if (visited.has(obj)) return; visited.add(obj); } catch(e) { return; }
+                                        try {
+                                            var keys = Object.keys(obj);
+                                            for (var i = 0; i < keys.length; i++) {
+                                                try {
+                                                    var val = obj[keys[i]];
+                                                    if (typeof val === 'string') {
+                                                        var m = val.match(/aimsg_[a-z0-9]{10,}/g);
+                                                        if (m) m.forEach(function(id) { if (found.indexOf(id) === -1) found.push(id); });
+                                                    } else if (typeof val === 'object' && val !== null) {
+                                                        searchObj(val, depth + 1);
+                                                    }
+                                                } catch(e) {}
+                                            }
+                                        } catch(e) {}
+                                    }
+
+                                    function scanFiber(fiber, depth) {
+                                        if (depth > 60 || !fiber || found.length > 200) return;
+                                        try { if (visited.has(fiber)) return; visited.add(fiber); } catch(e) { return; }
+                                        if (fiber.memoizedProps) searchObj(fiber.memoizedProps, 0);
+                                        // memoizedState é uma lista encadeada nos React hooks
+                                        var state = fiber.memoizedState;
+                                        var sc = 0;
+                                        while (state && sc < 30) {
+                                            if (state.memoizedState != null) {
+                                                if (typeof state.memoizedState === 'string') {
+                                                    var m = state.memoizedState.match(/aimsg_[a-z0-9]{10,}/g);
+                                                    if (m) m.forEach(function(id) { if (found.indexOf(id) === -1) found.push(id); });
+                                                } else if (typeof state.memoizedState === 'object') {
+                                                    searchObj(state.memoizedState, 0);
+                                                }
+                                            }
+                                            state = state.next;
+                                            sc++;
+                                        }
+                                        if (fiber.child) scanFiber(fiber.child, depth + 1);
+                                        if (fiber.sibling) scanFiber(fiber.sibling, depth + 1);
+                                    }
+
+                                    var allEls = document.querySelectorAll('*');
+                                    for (var i = 0; i < allEls.length; i++) {
+                                        var el = allEls[i];
+                                        var keys = Object.keys(el);
+                                        for (var k = 0; k < keys.length; k++) {
+                                            if (keys[k].indexOf('__reactFiber') === 0 || keys[k].indexOf('__reactInternalInstance') === 0) {
+                                                scanFiber(el[keys[k]], 0);
+                                                break;
+                                            }
+                                        }
+                                        // Não para no primeiro elemento - continua buscando em todo o DOM
+                                    }
+                                    return found;
+                                }
+                            });
+                            if (results && results[0] && results[0].result && results[0].result.length > 0) {
+                                const ids = results[0].result;
+                                aiMsgId = ids[ids.length - 1]; // Último = mais recente
+                                aiMsgIdSource = 'scripting(' + ids.length + ' ids found)';
+                                chrome.storage.local.set({ lovable_last_aimsg: aiMsgId });
+                                console.log('[Lovable Infinity] ai_message_id extraído via scripting:', aiMsgId, '(total:', ids.length, ')');
+                            } else {
+                                console.warn('[Lovable Infinity] Nenhum ai_message_id encontrado via scripting');
+                                aiMsgIdSource = 'scripting(none found)';
+                            }
+                        } else {
+                            console.warn('[Lovable Infinity] Nenhuma aba lovable.dev encontrada');
+                            aiMsgIdSource = 'no lovable tab';
+                        }
+                    } catch (e) {
+                        console.warn('[Lovable Infinity] Falha ao extrair ai_message_id via scripting:', e.message);
+                        aiMsgIdSource = 'scripting-error: ' + e.message;
+                    }
+                }
+
+                // Sobrescrever o ai_message_id com o real capturado (se disponível)
+                if (aiMsgId) {
+                    payload.ai_message_id = aiMsgId;
+                }
+
+                console.log('[Lovable Infinity] Enviando para API. ai_message_id:', payload.ai_message_id, '| source:', aiMsgIdSource);
+
+                const headers = {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                };
+                if (gitSha) {
+                    headers['X-Client-Git-SHA'] = gitSha;
+                }
+
+                const url = `https://api.lovable.dev/projects/${projectId}/chat`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(payload)
+                });
+
+                const text = await response.text();
+                let json = {};
+                try { json = JSON.parse(text); } catch (e) { }
+
+                if (response.ok || response.status === 202) {
+                    sendResponse({ success: true, status: response.status, data: json, text: text });
+                } else {
+                    const errorMsg = json.message || json.error || response.statusText || 'Erro desconhecido';
+                    sendResponse({
+                        success: false,
+                        error: `Erro ${response.status}: ${errorMsg}`,
+                        debug: { ai_message_id: payload.ai_message_id, source: aiMsgIdSource }
+                    });
+                }
+            } catch (error) {
+                sendResponse({ success: false, error: 'Falha na conexão: ' + error.message });
             }
         })();
         return true;
