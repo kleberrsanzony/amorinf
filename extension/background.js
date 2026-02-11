@@ -192,23 +192,56 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     ["requestHeaders"]
 );
 
-// Captura ai_message_id de POST /chat que a PRÓPRIA PÁGINA Lovable faz (não a extensão)
+// Captura ai_message_id de POST /chat + payload completo de /chat e /report_error
 chrome.webRequest.onBeforeRequest.addListener(
     (details) => {
         // Só captura de abas reais (tabId > 0 exclui requisições da extensão)
-        if (details.tabId > 0 && details.method === 'POST' && details.url.includes('/chat')) {
-            if (details.requestBody && details.requestBody.raw && details.requestBody.raw.length > 0) {
-                try {
-                    const decoder = new TextDecoder();
-                    const bodyStr = decoder.decode(details.requestBody.raw[0].bytes);
-                    const body = JSON.parse(bodyStr);
-                    if (body.ai_message_id && typeof body.ai_message_id === 'string' && body.ai_message_id.startsWith('aimsg_')) {
-                        chrome.storage.local.set({ lovable_last_aimsg: body.ai_message_id });
-                        console.log('[Lovable Infinity] ai_message_id capturado de POST /chat:', body.ai_message_id);
-                    }
-                } catch (e) { }
+        if (details.tabId <= 0 || details.method !== 'POST') return;
+        if (!details.requestBody || !details.requestBody.raw || details.requestBody.raw.length === 0) return;
+
+        try {
+            const decoder = new TextDecoder();
+            const bodyStr = decoder.decode(details.requestBody.raw[0].bytes);
+            const body = JSON.parse(bodyStr);
+
+            // === INTERCEPTA POST /chat ===
+            if (details.url.includes('/chat')) {
+                // Salva ai_message_id como antes
+                if (body.ai_message_id && typeof body.ai_message_id === 'string' && body.ai_message_id.startsWith('aimsg_')) {
+                    chrome.storage.local.set({ lovable_last_aimsg: body.ai_message_id });
+                }
+                // Salva payload completo do chat para análise
+                const chatEntry = {
+                    timestamp: Date.now(),
+                    url: details.url,
+                    body: body
+                };
+                chrome.storage.local.get({ lovable_chat_payloads: [] }, (stored) => {
+                    const arr = stored.lovable_chat_payloads || [];
+                    arr.push(chatEntry);
+                    // Mantém só os últimos 20
+                    if (arr.length > 20) arr.splice(0, arr.length - 20);
+                    chrome.storage.local.set({ lovable_chat_payloads: arr });
+                });
+                console.log('[Lovable Infinity] POST /chat capturado:', JSON.stringify(body).substring(0, 300));
             }
-        }
+
+            // === INTERCEPTA POST /report_error ===
+            if (details.url.includes('/report_error')) {
+                const errorEntry = {
+                    timestamp: Date.now(),
+                    url: details.url,
+                    body: body
+                };
+                chrome.storage.local.get({ lovable_report_errors: [] }, (stored) => {
+                    const arr = stored.lovable_report_errors || [];
+                    arr.push(errorEntry);
+                    if (arr.length > 20) arr.splice(0, arr.length - 20);
+                    chrome.storage.local.set({ lovable_report_errors: arr });
+                });
+                console.log('[Lovable Infinity] POST /report_error capturado:', JSON.stringify(body).substring(0, 500));
+            }
+        } catch (e) { }
     },
     { urls: ["https://api.lovable.dev/*"] },
     ["requestBody"]
@@ -218,6 +251,24 @@ chrome.webRequest.onBeforeRequest.addListener(
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "ping") {
         sendResponse("pong");
+        return;
+    }
+
+    // === DEBUG: Ler payloads capturados ===
+    if (request.action === "getInterceptedData") {
+        chrome.storage.local.get(['lovable_chat_payloads', 'lovable_report_errors'], (data) => {
+            sendResponse({
+                chatPayloads: data.lovable_chat_payloads || [],
+                reportErrors: data.lovable_report_errors || []
+            });
+        });
+        return true;
+    }
+
+    // === DEBUG: Limpar payloads capturados ===
+    if (request.action === "clearInterceptedData") {
+        chrome.storage.local.set({ lovable_chat_payloads: [], lovable_report_errors: [] });
+        sendResponse({ ok: true });
         return;
     }
 
@@ -446,6 +497,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 try { json = JSON.parse(text); } catch (e) { }
 
                 if (response.ok || response.status === 202) {
+                    // IMPORTANTE: Extrair novo ai_message_id da resposta para encadear corretamente
+                    // Sem isso, múltiplos envios usam o mesmo ai_message_id e Lovable substitui respostas
+                    try {
+                        const aimsgMatches = text.match(/aimsg_[a-z0-9]{10,}/g);
+                        if (aimsgMatches && aimsgMatches.length > 0) {
+                            const newAiMsgId = aimsgMatches[aimsgMatches.length - 1];
+                            chrome.storage.local.set({ lovable_last_aimsg: newAiMsgId });
+                            console.log('[Lovable Infinity] ai_message_id atualizado da resposta:', newAiMsgId);
+                        }
+                    } catch (e) {}
+
+                    // Backup: extrai ai_message_id da página após 3s (tempo pro React renderizar)
+                    setTimeout(async () => {
+                        try {
+                            const tabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });
+                            if (tabs.length > 0) {
+                                chrome.scripting.executeScript({
+                                    target: { tabId: tabs[0].id },
+                                    world: 'MAIN',
+                                    func: () => {
+                                        const ids = [];
+                                        document.querySelectorAll('div[id^="aimsg_"]').forEach(el => ids.push(el.id));
+                                        return ids;
+                                    }
+                                }).then(results => {
+                                    if (results && results[0] && results[0].result && results[0].result.length > 0) {
+                                        const latestId = results[0].result[results[0].result.length - 1];
+                                        chrome.storage.local.set({ lovable_last_aimsg: latestId });
+                                        console.log('[Lovable Infinity] ai_message_id atualizado via DOM:', latestId);
+                                    }
+                                }).catch(() => {});
+                            }
+                        } catch (e) {}
+                    }, 3000);
+
                     // Notifica o content script para ocultar a mensagem "Fix these issues" do chat
                     try {
                         const lovableTabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });

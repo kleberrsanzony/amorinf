@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const downloadProjectBtn = document.getElementById('download-project-btn');
     const downloadHtmlBtn = document.getElementById('download-html-btn');
     const voiceBtn = document.getElementById('voice-btn');
+    const modeToggleBtn = document.getElementById('mode-toggle-btn');
 
     // Storage key for chat per project
     const CHAT_STORAGE_KEY = 'lovable_infinity_chat';
@@ -559,18 +560,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     function buildErrorFixPayload(userMessage) {
         const now = Date.now();
 
-        // Monta a mensagem de "erro" que encapsula o prompt do usuário
+        // Erro técnico realista que embute a instrução do usuário como contexto
+        const errorMsg = `Application behavior does not match expected output. User reports: ${userMessage}`;
+        const stackTrace = `Error: ${errorMsg}\n    at UserFeedbackHandler (src/components/App.tsx:142:8)\n    at renderWithHooks (node_modules/react-dom/cjs/react-dom.development.js:14985:18)\n    at mountIndeterminateComponent (node_modules/react-dom/cjs/react-dom.development.js:17811:13)`;
+
         const errorDetail = {
             timestamp: now,
             error_type: "RUNTIME_ERROR",
-            filename: "Unknown file",
-            lineno: 0,
-            colno: 0,
-            stack: userMessage,
+            filename: "src/components/App.tsx",
+            lineno: 142,
+            colno: 8,
+            stack: stackTrace,
             has_blank_screen: false
         };
 
-        const formattedMessage = `For the code present, I get the error below.\n\nPlease think step-by-step in order to resolve it.\n\`\`\`\n${userMessage}\n\n${JSON.stringify(errorDetail, null, 2)}\n\`\`\`\n`;
+        const formattedMessage = `Fix these issues\n\n${errorMsg}\n\n\`\`\`\n${JSON.stringify(errorDetail, null, 2)}\n\`\`\`\n`;
 
         return {
             id: generateMsgId(),
@@ -590,11 +594,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 {
                     timestamp: now - 1000,
                     error_type: "RUNTIME_ERROR",
-                    message: userMessage,
-                    filename: "Unknown file",
-                    lineno: 0,
-                    colno: 0,
-                    stack: userMessage,
+                    message: errorMsg,
+                    filename: "src/components/App.tsx",
+                    lineno: 142,
+                    colno: 8,
+                    stack: stackTrace,
                     has_blank_screen: false
                 }
             ],
@@ -606,6 +610,35 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         };
     }
+
+    // ============================================
+    // PAYLOAD MINIMAL (hipótese do proxy)
+    // contains_error: true + mode: instant + mensagem LIMPA
+    // SEM error_ids, SEM runtime_errors, SEM template de erro
+    // Hipótese: o proxy PHP enviava assim e não substituía respostas
+    // ============================================
+    function buildMinimalPayload(userMessage) {
+        return {
+            id: generateMsgId(),
+            message: userMessage,
+            mode: "instant",
+            contains_error: true,
+            ai_message_id: generateAiMsgId(),
+            current_page: "/",
+            view: "code",
+            view_description: "The user is currently viewing the code.",
+            model: null
+        };
+    }
+
+    // Ciclo de modos: error -> min -> error
+    const MODES = ['error', 'min'];
+    const MODE_LABELS = { error: 'ERR', min: 'MIN' };
+    const MODE_COLORS = {
+        error:  { bg: 'rgba(239,68,68,0.15)', fg: '#ef4444', border: 'rgba(239,68,68,0.3)' },
+        min:    { bg: 'rgba(168,85,247,0.15)', fg: '#a855f7', border: 'rgba(168,85,247,0.3)' }
+    };
+    let sendMode = 'error';
 
     // Envio de mensagem via API direta do Lovable (formato error fix)
     async function sendMessage() {
@@ -649,8 +682,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearFile();
 
         try {
-            // Montar payload no formato "error fix" do Lovable
-            const payload = buildErrorFixPayload(text);
+            // Escolhe o payload baseado no modo
+            let payload;
+            if (sendMode === 'min') payload = buildMinimalPayload(text);
+            else payload = buildErrorFixPayload(text);
 
             chrome.runtime.sendMessage({
                 action: "sendLovableChat",
@@ -663,7 +698,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
                 if (response && response.success) {
-                    addSystemMessage('Enviado! A resposta aparecerá no Lovable.');
+                    addSystemMessage(`Enviado [${sendMode.toUpperCase()}]! A resposta aparecerá no Lovable.`);
                 } else {
                     let debugInfo = '';
                     if (response && response.debug) {
@@ -1125,6 +1160,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 voiceStartRecording();
             }
+        });
+    }
+
+    // Toggle modo de envio: cicla error -> soft -> edit
+    if (modeToggleBtn) {
+        modeToggleBtn.addEventListener('click', () => {
+            const idx = MODES.indexOf(sendMode);
+            sendMode = MODES[(idx + 1) % MODES.length];
+            const c = MODE_COLORS[sendMode];
+            modeToggleBtn.textContent = MODE_LABELS[sendMode];
+            modeToggleBtn.title = `Modo: ${sendMode.toUpperCase()} (clique para alternar)`;
+            modeToggleBtn.style.background = c.bg;
+            modeToggleBtn.style.color = c.fg;
+            modeToggleBtn.style.borderColor = c.border;
         });
     }
 
