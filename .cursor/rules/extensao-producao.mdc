@@ -1,0 +1,28 @@
+# Extensão de Produção: extension-prod/
+
+## Regra fundamental
+
+A extensão de produção fica em `extension-prod/`. **É nela que todo o trabalho acontece.** Todas as funcionalidades, correções, melhorias e builds são feitas exclusivamente sobre `extension-prod/`.
+
+## O que é cada pasta
+
+| Pasta | Propósito | Mexer? |
+|-------|-----------|--------|
+| **extension-prod/** | Extensão PRINCIPAL. Código fonte de produção. Build, ofuscação e distribuição saem daqui. | **SIM — sempre** |
+| **Futura Extensao/** | Código em modo desenvolvedor para experimentação futura. NÃO é usada em produção. | **NÃO — só quando explicitamente pedido** |
+
+## Regras obrigatórias
+
+1. **Nunca** editar `Futura Extensao/` achando que é a extensão principal.
+2. **Sempre** que o usuário falar sobre "a extensão", "a build", "o popup", "o background", ele está se referindo a `extension-prod/`.
+3. **Toda build** é executada com `npm run build` e gera a pasta `extension-prod/build/` (ofuscada).
+4. **Nunca** fazer build da `Futura Extensao/`.
+5. O arquivo ZIP distribuído aos clientes é gerado a partir de `extension-prod/build/`.
+6. Ao rodar `npm run build` sem argumento, o versionamento PATCH é incrementado automaticamente.
+
+## Fluxo de build
+
+1. Código fonte: `extension-prod/` (legível, editável)
+2. Build: `npm run build` → gera `extension-prod/build/` (ofuscado)
+3. ZIP: `LOVABLE_INFINITY_vX.X.X.zip` na raiz
+4. Deploy: ZIP copiado para `admin/downloads/` + deploy automático na Vercel

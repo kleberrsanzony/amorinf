@@ -2,61 +2,105 @@
 
 Extensao Chrome que permite prompts ilimitados no Lovable.dev.
 
+## IMPORTANTE: Extensao de Producao
+
+> **A extensao principal e UNICA de trabalho e `extension-prod/`.**
+> Toda build, correcao, melhoria e funcionalidade e feita nela.
+> A pasta `Futura Extensao/` e apenas para experimentacao futura e NAO deve ser editada em producao.
+
 ## Estrutura do Projeto
 
 ```
 .
-├── extension-prod/     # Extensao de PRODUCAO (usuarios finais)
-│   └── Envia mensagens via N8N webhook (estavel)
+├── extension-prod/        # EXTENSAO PRINCIPAL (producao, build, distribuicao)
+│   ├── background.js      # Service worker (comunicacao N8N, download HTML)
+│   ├── popup.js            # Interface do chat, licenca, arquivos
+│   ├── config.js           # Configuracoes e endpoints
+│   ├── auth.js             # Autenticacao de licenca
+│   ├── content.js          # Content script (injecao na pagina)
+│   ├── zip-utils.js        # Utilitario para criar ZIPs
+│   └── build/              # Pasta gerada pelo build (ofuscada, nao commitar)
 │
-├── extension-dev/      # Extensao de DESENVOLVIMENTO (laboratorio)
-│   └── Envia mensagens direto para a API do Lovable (experimental)
+├── Futura Extensao/        # Modo desenvolvedor (experimentacao futura, NAO USAR)
 │
-├── supabase/           # Backend (Supabase Edge Functions)
+├── admin/                  # Painel admin (hospedado na Vercel)
+│   ├── index.html          # Interface do painel
+│   ├── admin.js            # Logica do painel (licencas, usuarios)
+│   ├── auth-config.js      # Autenticacao Supabase + API
+│   ├── styles.css          # Estilos
+│   └── version.json        # Versao atual (gerado pelo build)
+│
+├── api/                    # API Vercel (serverless functions)
+│   ├── createLicense.js    # Criar licenca
+│   ├── listLicenses.js     # Listar licencas
+│   ├── updateLicense.js    # Editar licenca
+│   ├── deleteLicense.js    # Remover licenca
+│   ├── createPanelUser.js  # Criar socio/parceiro
+│   ├── listPanelUsers.js   # Listar socios
+│   ├── updatePanelUser.js  # Editar socio (nome, email, senha)
+│   └── deletePanelUser.js  # Remover socio
+│
+├── supabase/               # Backend (Edge Functions + migrations)
 │   ├── functions/
 │   │   ├── _shared/            # Modulos compartilhados (CORS, JWT, DB)
-│   │   ├── send-prompt/        # Proxy N8N (usado pela extensao PROD)
-│   │   ├── send-message/       # Proxy direto Lovable API (usado pela extensao DEV)
-│   │   ├── enhance-prompt/     # Melhorador de prompt + transcricao de audio
-│   │   ├── validate-license/   # Validacao de licenca + emissao de JWT
+│   │   ├── send-prompt/        # Proxy N8N (envio de mensagens)
+│   │   ├── validate-license/   # Validacao de licenca + JWT
 │   │   ├── verify-session/     # Verificacao de sessao JWT
-│   │   └── refresh-session/    # Renovacao de sessao JWT
-│   └── migrations/             # SQL migrations (tabela licenses)
+│   │   ├── refresh-session/    # Renovacao de sessao JWT
+│   │   └── enhance-prompt/     # Melhorador de prompt + transcricao de audio
+│   └── migrations/             # SQL migrations
 │
-├── docs/               # Documentacao
-└── .cursor/            # Regras do Cursor IDE
+├── scripts/                # Scripts de build
+│   └── build.js            # Build automatizado (ofuscacao, ZIP, deploy)
+│
+├── docs/                   # Documentacao
+└── .cursor/rules/          # Regras do Cursor IDE
 ```
 
-## Duas Extensoes, Mesmo Backend
+## Fluxo de Mensagens (Producao)
 
-Ambas as extensoes compartilham:
-- Mesmo sistema de licenciamento (Supabase Postgres)
-- Mesmo melhorador de prompt (OpenRouter via Supabase)
-- Mesma interface visual
-- Mesmo limite de arquivos: ate 10 anexos, 20MB por arquivo
-- Anexo por botao, colar (Ctrl+V) e drag & drop
+```
+Extensao → Supabase Edge Function (send-prompt) → N8N Webhook → Lovable
+```
 
-A diferenca esta APENAS no envio de mensagens:
-- **PROD** (`extension-prod/`): Extension → Supabase `send-prompt` → N8N → Lovable
-- **DEV** (`extension-dev/`): Extension → Supabase `send-message` → Lovable API direta
+## Fluxo de Build
 
-## Seguranca (send-prompt / PROD)
+```
+npm run build           → Incrementa PATCH (3.5.1 → 3.5.2)
+npm run build -- minor  → Incrementa MINOR (3.5.1 → 3.6.0)
+npm run build -- major  → Incrementa MAJOR (3.5.1 → 4.0.0)
+npm run build -- skip   → Mantem versao atual
+```
 
-- Versao minima: 3.5.0
-- HMAC-SHA256 do body (anti-tampering)
-- Nonce anti-replay (armazenado em DB)
-- Janela de timestamp (5 min)
-- Rate limit: 20 req/min por licenca
-- Webhook URL so server-side
+O build:
+1. Ofusca o JS de `extension-prod/` com blindagem anti-IA
+2. Gera `extension-prod/build/` (pasta ofuscada)
+3. Cria ZIP `LOVABLE_INFINITY_vX.X.X.zip`
+4. Copia para `admin/downloads/`
+5. Faz deploy automatico na Vercel (painel + API)
 
 ## Stack
 
 - **Frontend:** Chrome Extension (Manifest V3)
 - **Backend:** Supabase Edge Functions (Deno/TypeScript)
-- **Banco de dados:** Supabase PostgreSQL (licencas)
-- **APIs externas:** Lovable API, OpenRouter API, N8N
+- **Banco de dados:** Supabase PostgreSQL
+- **Painel admin:** Vercel (static + serverless)
+- **APIs externas:** N8N, OpenRouter API
+
+## Seguranca
+
+- JWT obrigatorio para envio de mensagens
+- Validacao de licenca via Supabase Postgres
+- Codigo ofuscado com blindagem anti-IA
+- Multi-tenancy: licencas separadas por owner_id
+- Sem licencas de manutencao ou bypass no codigo
 
 ## Deploy
+
+### Build completo (extensao + painel)
+```powershell
+npm run build
+```
 
 ### Edge Functions (Supabase)
 ```powershell
@@ -64,7 +108,7 @@ $env:SUPABASE_ACCESS_TOKEN = "seu_token"
 npx supabase functions deploy --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
 ```
 
-### Extensoes (Chrome)
-Carregar em `chrome://extensions` com Developer Mode:
-- **Producao:** Apontar para `extension-prod/`
-- **Desenvolvimento:** Apontar para `extension-dev/`
+### Painel admin (Vercel — ja incluido no build)
+```powershell
+npx vercel --prod --yes
+```

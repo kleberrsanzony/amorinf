@@ -4,7 +4,7 @@
 
 # Build da extensão (apenas extension-prod passa pelo build)
 extension-prod/build/
-extension/build/
+Futura Extensao/build/
 LOVABLE_INFINITY*.zip
 admin/downloads/
 
