@@ -7,12 +7,26 @@ alwaysApply: true
 
 - **Regra:** Após qualquer alteração que afete produção, o agente deve **sempre executar o deploy**, nunca apenas sugerir ou avisar. Não deixar o deploy "cair" ou para o usuário fazer depois.
 
+- **Arquitetura atual:**
+  - **Vercel** = painel admin (HTML) + API de licenças (CRUD)
+  - **Supabase** = banco de dados (PostgreSQL) + Edge Functions + autenticação (Supabase Auth)
+
 - **Quando fazer deploy:**
-  - **API (pasta `api/`):** Alterações em `api/*`, `vercel.json` ou variáveis da API → deploy no **Vercel**. Comando: `npx vercel --prod` (na raiz do projeto). Se o projeto estiver ligado ao Git e o usuário preferir deploy por push, fazer commit e push; senão, executar `npx vercel --prod`.
-  - **Admin / extensão / Firebase:** Alterações em `admin/`, `extension/`, `firebase.json`, `.firebaserc` ou conteúdo que sobe no hosting → deploy no **Firebase**. Comando: `firebase deploy --only hosting` (na raiz do projeto).
+  - **API ou Painel Admin (pasta `api/` ou `admin/`):** Alterações em `api/*`, `admin/*` ou `vercel.json` → deploy na **Vercel**. Comando: `npx vercel --prod --yes` (na raiz do projeto).
+  - **Supabase Edge Functions (pasta `supabase/functions/`):** Alterações em qualquer Edge Function → deploy com `npx supabase functions deploy <nome-da-funcao> --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi`. Para deploy de TODAS as funções: `npx supabase functions deploy --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi`. Requer `$env:SUPABASE_ACCESS_TOKEN = "sbp_1d38838cacc51894b0328ed548cbb98bbeaaeaca"`.
+  - **Extensão (pasta `extension-prod/`):** Alterações na extensão são aplicadas pelo build (`npm run build`) que inclui deploy Vercel automaticamente.
 
-- **Ordem:** Se alterou API e admin/extension no mesmo fluxo, executar os dois deploys (Vercel e Firebase).
+- **Ordem:** Se alterou API/admin E Edge Functions no mesmo fluxo, executar os dois deploys (Vercel e Supabase).
 
-- **Comando Firebase (PowerShell):** Na raiz do projeto: `firebase deploy --only hosting`
+- **Comando Vercel deploy (PowerShell):** Na raiz do projeto: `npx vercel --prod --yes`
 
-- **Comando Vercel (PowerShell):** Na raiz do projeto: `npx vercel --prod`
+- **Comando Supabase deploy (PowerShell):**
+  ```powershell
+  $env:SUPABASE_ACCESS_TOKEN = "sbp_1d38838cacc51894b0328ed548cbb98bbeaaeaca"
+  npx supabase functions deploy <nome> --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
+  ```
+
+- **URLs de produção:**
+  - Painel Admin: https://lovable-infinity-panel.vercel.app
+  - API: https://lovable-infinity-panel.vercel.app/api/*
+  - Supabase: https://svjglgrxqxqtonoobcdi.supabase.co

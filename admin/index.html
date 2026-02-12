@@ -260,11 +260,17 @@
             </div>
             <div class="form-group">
                 <label for="panel-user-password">Senha</label>
-                <input type="password" id="panel-user-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                <div class="input-with-toggle">
+                    <input type="password" id="panel-user-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                    <button type="button" class="toggle-password" data-target="panel-user-password" aria-label="Mostrar senha" title="Mostrar/ocultar senha">👁</button>
+                </div>
             </div>
             <div class="form-group">
                 <label for="panel-user-password-confirm">Confirmar senha</label>
-                <input type="password" id="panel-user-password-confirm" placeholder="Repita a senha" autocomplete="new-password">
+                <div class="input-with-toggle">
+                    <input type="password" id="panel-user-password-confirm" placeholder="Repita a senha" autocomplete="new-password">
+                    <button type="button" class="toggle-password" data-target="panel-user-password-confirm" aria-label="Mostrar senha" title="Mostrar/ocultar senha">👁</button>
+                </div>
             </div>
             <p id="panel-user-error" class="alert alert-error" style="display: none;"></p>
             <div class="button-group">
@@ -280,8 +286,8 @@
             <h2 class="modal-header" id="modal-edit-panel-user-title">Editar usuário</h2>
             <input type="hidden" id="edit-panel-user-uid" value="">
             <div class="form-group">
-                <label>E-mail (somente leitura)</label>
-                <div class="license-key" id="edit-panel-user-email-display"></div>
+                <label for="edit-panel-user-email">E-mail</label>
+                <input type="email" id="edit-panel-user-email" placeholder="email@exemplo.com">
             </div>
             <div class="form-group">
                 <label for="edit-panel-user-name">Nome de exibição</label>
@@ -289,7 +295,10 @@
             </div>
             <div class="form-group">
                 <label for="edit-panel-user-new-password">Nova senha (deixe em branco para manter)</label>
-                <input type="password" id="edit-panel-user-new-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                <div class="input-with-toggle">
+                    <input type="password" id="edit-panel-user-new-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                    <button type="button" class="toggle-password" data-target="edit-panel-user-new-password" aria-label="Mostrar senha" title="Mostrar/ocultar senha">👁</button>
+                </div>
             </div>
             <div class="form-group">
                 <label class="checkbox-label">
@@ -428,9 +437,8 @@
         </div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-    <script src="firebase-config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="auth-config.js"></script>
     <script src="license-manager.js"></script>
     <script src="admin.js"></script>
 </body>

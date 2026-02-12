@@ -1,5 +1,5 @@
 /**
- * Painel de Admin - Multi-tenant com Firebase Auth
+ * Painel de Admin - Multi-tenant com Supabase Auth
  */
 
 let currentAction = null;
@@ -47,7 +47,7 @@ function isMasterUser() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await initializeFirebase();
+    await initializeAuth();
     await licenseManager.init();
 
     const lifetimeCheckbox = document.getElementById('create-license-lifetime');
@@ -66,17 +66,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         editLifetimeCheck.addEventListener('change', toggleEdit);
     }
 
-    const auth = getFirebaseAuth();
+    const auth = getAuth();
     if (!auth) {
         document.getElementById('login-screen').classList.remove('hidden');
-        document.getElementById('login-error').textContent = 'Configure apiKey e authDomain no firebase-config.js para usar o login.';
+        document.getElementById('login-error').textContent = 'Erro ao inicializar autenticação. Verifique a configuração.';
         document.getElementById('login-error').classList.add('show');
         return;
     }
 
     auth.onAuthStateChanged(function (user) {
         currentUser = user;
-        window.getAdminAuthToken = user ? function () { return user.getIdToken(); } : null;
         if (user) {
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('admin-panel-wrap').classList.add('visible');
@@ -101,36 +100,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         errEl.classList.remove('show');
         if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
-        var emailLower = email.toLowerCase();
-        var isMasterEmail = MASTER_EMAILS.some(function (m) { return m.toLowerCase() === emailLower; });
         try {
             await auth.signInWithEmailAndPassword(email, password);
             errEl.classList.remove('show');
         } catch (err) {
-            var code = (err && err.code) || '';
             var msg = (err && err.message) ? String(err.message) : '';
-            var isProviderDisabled = code === 'auth/operation-not-allowed' || /OPERATION_NOT_ALLOWED|not allowed|disabled|não está habilitado/i.test(msg);
-            if (isProviderDisabled) {
-                errEl.innerHTML = 'Login por e-mail/senha ainda não está habilitado. <a href="https://console.firebase.google.com/project/lovable2-e6f7f/authentication/providers" target="_blank" rel="noopener">Habilite no Firebase Console</a> (Authentication &gt; Sign-in method &gt; E-mail/senha).';
-                errEl.classList.add('show');
-            } else if (isMasterEmail) {
+            // Se o email é master e o login falhou, tentar criar a conta
+            var emailLower = email.toLowerCase();
+            var isMasterEmail = MASTER_EMAILS.some(function (m) { return m.toLowerCase() === emailLower; });
+            if (isMasterEmail && (msg.includes('Invalid login') || msg.includes('invalid'))) {
                 try {
                     if (btn) { btn.textContent = 'Criando conta...'; }
                     await auth.createUserWithEmailAndPassword(email, password);
                     errEl.classList.remove('show');
                 } catch (createErr) {
-                    var createCode = (createErr && createErr.code) || '';
-                    var createMsg = (createErr && createErr.message) ? String(createErr.message) : '';
-                    if (createCode === 'auth/email-already-in-use') {
-                        errEl.textContent = 'Senha incorreta. Essa conta já existe.';
-                        errEl.classList.add('show');
-                    } else if (createCode === 'auth/operation-not-allowed' || /OPERATION_NOT_ALLOWED|not allowed|disabled/i.test(createMsg)) {
-                        errEl.innerHTML = 'Login por e-mail/senha ainda não está habilitado. <a href="https://console.firebase.google.com/project/lovable2-e6f7f/authentication/providers" target="_blank" rel="noopener">Habilite no Firebase Console</a>.';
-                        errEl.classList.add('show');
-                    } else {
-                        errEl.textContent = (createErr && createErr.message) || 'Não foi possível criar a conta.';
-                        errEl.classList.add('show');
-                    }
+                    errEl.textContent = (createErr && createErr.message) || 'Não foi possível criar a conta.';
+                    errEl.classList.add('show');
                 }
             } else {
                 errEl.textContent = msg || 'Falha no login. Verifique e-mail e senha.';
@@ -258,6 +243,24 @@ function setupEventListeners() {
         const group = document.getElementById('edit-panel-user-valid-until-group');
         if (group) group.style.display = this.checked ? 'none' : 'block';
     });
+
+    // Toggle de senha (olhinho) — funciona para todos os botões .toggle-password
+    document.querySelectorAll('.toggle-password').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var targetId = btn.getAttribute('data-target');
+            var input = document.getElementById(targetId);
+            if (!input) return;
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.classList.add('active');
+                btn.textContent = '🙈';
+            } else {
+                input.type = 'password';
+                btn.classList.remove('active');
+                btn.textContent = '👁';
+            }
+        });
+    });
 }
 
 const RELEASE_STORAGE_KEY = 'lovable_lastSeenReleaseVersion';
@@ -265,7 +268,19 @@ const RELEASE_STORAGE_KEY = 'lovable_lastSeenReleaseVersion';
 function formatReleaseDate(publishedAt) {
     if (publishedAt == null) return '—';
     try {
-        var d = new Date(typeof publishedAt === 'number' ? publishedAt : parseInt(publishedAt, 10));
+        var d;
+        if (typeof publishedAt === 'number') {
+            d = new Date(publishedAt);
+        } else if (typeof publishedAt === 'string') {
+            // Tentar como ISO string primeiro (ex: "2026-02-12T16:33:05.338Z")
+            d = new Date(publishedAt);
+            // Se falhou como ISO, tentar como timestamp numérico
+            if (isNaN(d.getTime())) {
+                d = new Date(parseInt(publishedAt, 10));
+            }
+        } else {
+            return '—';
+        }
         if (isNaN(d.getTime())) return '—';
         return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch (e) { return '—'; }
@@ -297,9 +312,8 @@ function closeExtensionReleaseModal() {
 async function checkExtensionRelease() {
     var release = null;
     try {
-        if (typeof firebaseRequest === 'function') {
-            release = await firebaseRequest('/extensionRelease/current');
-        }
+        var r = await licensesApiRequest('/api/extensionRelease');
+        if (r.ok && r.data) release = r.data;
     } catch (e) {}
     var hasRelease = release && (release.version !== undefined || release.publishedAt !== undefined);
     if (hasRelease) {
@@ -324,8 +338,8 @@ async function checkExtensionRelease() {
         var res = await fetch('/version.json?_=' + Date.now());
         if (res.ok) {
             var fallback = await res.json();
-            if (fallback && (fallback.version != null || fallback.publishedAt != null)) {
-                loadReleaseIntoBar({ version: fallback.version, publishedAt: fallback.publishedAt, filename: fallback.filename });
+            if (fallback && (fallback.version != null || fallback.publishedAt != null || fallback.date != null)) {
+                loadReleaseIntoBar({ version: fallback.version, publishedAt: fallback.publishedAt || fallback.date, filename: fallback.filename });
                 return;
             }
         }
@@ -363,7 +377,7 @@ async function createPanelUserSubmit() {
     }
     var apiUrl = typeof CREATE_PANEL_USER_API_URL !== 'undefined' ? CREATE_PANEL_USER_API_URL : '';
     if (!apiUrl) {
-        if (errEl) { errEl.textContent = 'Configure CREATE_PANEL_USER_API_URL no firebase-config.js.'; errEl.style.display = 'block'; errEl.classList.add('alert-error'); }
+        if (errEl) { errEl.textContent = 'Configure CREATE_PANEL_USER_API_URL na configuração.'; errEl.style.display = 'block'; errEl.classList.add('alert-error'); }
         return;
     }
     if (!currentUser) {
@@ -787,13 +801,15 @@ let panelUsersCache = [];
 let licensesCountByOwner = {}; // Contagem de licenças ativas por ownerId
 
 /**
- * Busca todas as licenças do Firebase e conta por ownerId.
+ * Busca todas as licenças e conta por ownerId.
  * Retorna um objeto { ownerId: { total, active } }
  */
 async function fetchLicensesCountByOwner() {
     try {
-        if (typeof firebaseRequest !== 'function') return {};
-        const result = await firebaseRequest('/licenses');
+        var r = await licensesApiRequest('/api/listLicenses');
+        if (!r.ok || !r.data || !Array.isArray(r.data.licenses)) return {};
+        const result = {};
+        r.data.licenses.forEach(function(lic) { result[lic.key] = lic; });
         if (!result || typeof result !== 'object') return {};
         
         const counts = {};
@@ -927,7 +943,7 @@ function openEditPanelUserModal(uid) {
         return;
     }
     document.getElementById('edit-panel-user-uid').value = user.uid;
-    document.getElementById('edit-panel-user-email-display').textContent = user.email || '—';
+    document.getElementById('edit-panel-user-email').value = user.email || '';
     document.getElementById('edit-panel-user-name').value = user.displayName || '';
     document.getElementById('edit-panel-user-new-password').value = '';
     document.getElementById('edit-panel-user-disabled').checked = !!user.disabled;
@@ -958,6 +974,7 @@ function closeEditPanelUserModal() {
 
 async function submitEditPanelUser() {
     var uid = document.getElementById('edit-panel-user-uid').value;
+    var newEmail = (document.getElementById('edit-panel-user-email').value || '').trim().toLowerCase();
     var displayName = (document.getElementById('edit-panel-user-name').value || '').trim();
     var newPassword = document.getElementById('edit-panel-user-new-password').value || '';
     var disabled = document.getElementById('edit-panel-user-disabled').checked;
@@ -970,6 +987,11 @@ async function submitEditPanelUser() {
         if (!isNaN(d.getTime())) {
             validUntil = d.getTime();
         }
+    }
+
+    if (!newEmail) {
+        showAlertAdmin('O e-mail não pode ficar vazio.', 'error');
+        return;
     }
 
     if (newPassword && newPassword.length < 6) {
@@ -988,7 +1010,7 @@ async function submitEditPanelUser() {
 
     try {
         var token = await currentUser.getIdToken();
-        var body = { uid: uid, displayName: displayName, disabled: disabled, validUntil: validUntil };
+        var body = { uid: uid, email: newEmail, displayName: displayName, disabled: disabled, validUntil: validUntil };
         if (newPassword) body.password = newPassword;
 
         var res = await fetch(apiUrl, {

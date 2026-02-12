@@ -2,21 +2,11 @@
 # Lovable Infinity - Git ignore
 # ============================================
 
-# Build da extensão (não commitar)
+# Build da extensão (apenas extension-prod passa pelo build)
+extension-prod/build/
 extension/build/
-LOVABLE_INFINITY.zip
-admin/downloads/*.zip
-admin/version.json
-
-# Pacote para sócio (gerado por npm run prepare-partner)
-extension-para-socio/
-
-# Firebase cache
-.firebase/
-
-# Firebase Service Account JSON (credenciais sensíveis)
-**/lovable*-firebase-adminsdk-*.json
-docs/*-firebase-adminsdk-*.json
+LOVABLE_INFINITY*.zip
+admin/downloads/
 
 # Node modules
 node_modules/
@@ -36,10 +26,10 @@ desktop.ini
 *.swo
 *~
 
-# Env com chaves (não commitar)
+# Env com chaves (nunca commitar)
 .env
-.env.local
-.env.*.local
+.env.*
+.env*.local
 
 # Temporários
 *.tmp
@@ -48,10 +38,23 @@ temp/
 
 # Backups
 *.backup
+*.bak
 backup/
 
 # Arquivos de build
 dist/
 build/
+
+# Supabase local
+supabase/.temp/
+
+# Vercel
 .vercel
-.env*.local
+
+# Firebase (legado, removido do projeto)
+.firebase/
+.firebaserc
+firebase.json
+
+# Playwright/testes
+.playwright-mcp/

@@ -1,55 +1,19 @@
 {
-  "version": 2,
-  "buildCommand": "echo ok",
-  "outputDirectory": ".",
+  "buildCommand": "",
+  "outputDirectory": "admin",
   "functions": {
-    "api/sendPrompt.js": {
-      "memory": 256,
-      "maxDuration": 30
-    },
-    "api/improvePrompt.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/improvePromptSecure.js": {
-      "memory": 512,
-      "maxDuration": 60
-    },
-    "api/createPanelUser.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/listPanelUsers.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/updatePanelUser.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/deletePanelUser.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/validateLicense.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/verifySession.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/refreshSession.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/revokeAllSessions.js": {
-      "memory": 256,
-      "maxDuration": 10
-    },
-    "api/publishExtensionRelease.js": {
-      "memory": 256,
-      "maxDuration": 10
+    "api/extensionRelease.js": {
+      "includeFiles": "admin/version.json"
     }
-  }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+      ]
+    }
+  ]
 }

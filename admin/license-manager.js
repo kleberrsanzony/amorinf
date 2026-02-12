@@ -1,6 +1,6 @@
 /**
  * Sistema de Gerenciamento de Licenças
- * Funciona na extensão (chrome.storage) e na web/admin (Firebase apenas)
+ * Funciona na extensão (chrome.storage) e na web/admin (Supabase + Vercel API)
  */
 
 const hasChromeStorage = () => typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
@@ -68,7 +68,7 @@ class LicenseManager {
     }
 
     /**
-     * Salva licenças (local; na web é no-op, dados ficam no Firebase)
+     * Salva licenças (local; na web é no-op, dados ficam na API)
      */
     async saveLicenses() {
         if (!hasChromeStorage()) return Promise.resolve();
@@ -149,7 +149,7 @@ class LicenseManager {
      * Valida uma licenca
      * Funciona em qualquer maquina
      * Multiplos usuarios podem usar a mesma licenca
-     * Consulta Firebase primeiro (nuvem)
+     * Consulta API primeiro (nuvem)
      */
     async validateLicense(key) {
         // Tentar carregar da nuvem primeiro
@@ -245,7 +245,7 @@ class LicenseManager {
     }
 
     /**
-     * Deleta uma licença (local e Firebase)
+     * Deleta uma licença (local e nuvem)
      */
     async deleteLicense(key) {
         await this.loadLicenses();
@@ -255,7 +255,7 @@ class LicenseManager {
             this.licenses.splice(index, 1);
             await this.saveLicenses();
             
-            // Deletar do Firebase também
+            // Deletar da nuvem também
             if (typeof deleteLicenseFromCloud !== 'undefined') {
                 try {
                     await deleteLicenseFromCloud(key);
@@ -269,7 +269,7 @@ class LicenseManager {
 
     /**
      * Edita uma licença
-     * No admin web, sincroniza com Firebase após atualizar localmente
+     * No admin web, sincroniza com a API após atualizar localmente
      */
     async editLicense(key, updates) {
         await this.loadLicenses();

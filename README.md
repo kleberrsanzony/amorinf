@@ -1,83 +1,70 @@
 # Lovable Infinity
 
-Extensão Chrome (side panel) para Lovable.dev + painel administrativo de licenças.
+Extensao Chrome que permite prompts ilimitados no Lovable.dev.
 
-**Versão da extensão:** ver `version` em [package.json](package.json). O build propaga essa versão para `extension/manifest.json` e para o painel (ver [Versionamento](#versionamento)).
-
----
-
-## ⚠️ EXTENSÃO QUEBROU? CHEGOU ATUALIZAÇÃO EXTERNA?
-
-**→ [CLIQUE AQUI: Protocolo de Emergência](docs/EMERGENCIA_ATUALIZACAO_EXTERNA.md)**
-
-Use quando receber uma nova versão externa com a comunicação funcionando e precisar integrar na nossa extensão mantendo todas as funcionalidades.
-
----
-
-## 🔧 Histórico de Correções / Troubleshooting
-
-### v3.2.1 (Fev/2025) - Correção: "Erro ao ativar licença"
-
-**Problema:** Ao tentar ativar uma licença gerada no painel, a extensão mostrava "Erro ao ativar licença. Tente novamente." e no console aparecia erro **401 (Unauthorized)** ao tentar escrever no Firebase.
-
-**Causa:** As regras do Firebase Realtime Database (`database.rules.json`) exigem autenticação para escrita:
-```json
-"licenses": {
-  ".read": true,
-  ".write": "auth != null"  // Precisa estar autenticado
-}
-```
-A extensão conseguia **ler** a licença (`.read: true`), mas ao tentar **atualizar** para vincular ao dispositivo, falhava por não ter autenticação.
-
-**Solução:** A extensão agora usa a API do Vercel (`/api/validateLicense`) em vez de acessar o Firebase diretamente. Essa API usa o **Firebase Admin SDK** que tem permissão total de leitura/escrita.
-
-**Arquivos alterados:**
-- `extension/config.js` - Adicionado `VALIDATE_LICENSE_ENDPOINT` e função `validateKeySecure()` agora chama a API Vercel
-
-**Se o problema voltar a acontecer:**
-1. Verificar se a API Vercel está funcionando: `https://lovable-infinity-api.vercel.app/api/validateLicense`
-2. Verificar se o `FIREBASE_SERVICE_ACCOUNT_JSON` está configurado no Vercel
-3. Verificar os logs da API no dashboard do Vercel
-
----
-
-## Versionamento
-
-- **Fonte única:** A versão da extensão fica em **package.json** (campo `version`).
-- **Build:** Ao rodar `npm run build`, a versão é copiada para `extension/manifest.json` e para a pasta de build. Nunca altere a versão manualmente no manifest — altere em `package.json` e rode o build.
-- **Antes de cada release:** Atualize `version` em `package.json` (ex.: `3.1` → `3.2`), rode `npm run build` e, no painel (aba Administração), publique a nova versão para os usuários verem o aviso.
-
-## Estrutura do projeto
+## Estrutura do Projeto
 
 ```
-Master_Lovable_Infinity/
-├── extension/          # Extensão Chrome (carregar esta pasta no Chrome)
-│   ├── manifest.json
-│   ├── popup.html, popup.js
-│   ├── auth.html, auth.js
-│   ├── background.js, content.js
-│   ├── config.js, firebase-config.js, license-manager.js
-│   ├── styles.css
-│   ├── ICONS/
-│   └── ...
-├── admin/              # Painel admin (Firebase Hosting publica esta pasta)
-│   ├── index.html
-│   ├── admin.js
-│   ├── firebase-config.js, license-manager.js, styles.css
-│   └── ...
-├── docs/               # Documentação
-├── scripts/            # Scripts de build / utilitários
-│   ├── build.bat       # Build da extensão (ofusca e gera extension/build/)
-│   └── mock-extension.js
-├── firebase.json       # Hosting: public = "admin"
-├── .firebaserc
-└── package.json
+.
+├── extension-prod/     # Extensao de PRODUCAO (usuarios finais)
+│   └── Envia mensagens via N8N webhook (estavel)
+│
+├── extension-dev/      # Extensao de DESENVOLVIMENTO (laboratorio)
+│   └── Envia mensagens direto para a API do Lovable (experimental)
+│
+├── supabase/           # Backend (Supabase Edge Functions)
+│   ├── functions/
+│   │   ├── _shared/            # Modulos compartilhados (CORS, JWT, DB)
+│   │   ├── send-prompt/        # Proxy N8N (usado pela extensao PROD)
+│   │   ├── send-message/       # Proxy direto Lovable API (usado pela extensao DEV)
+│   │   ├── enhance-prompt/     # Melhorador de prompt + transcricao de audio
+│   │   ├── validate-license/   # Validacao de licenca + emissao de JWT
+│   │   ├── verify-session/     # Verificacao de sessao JWT
+│   │   └── refresh-session/    # Renovacao de sessao JWT
+│   └── migrations/             # SQL migrations (tabela licenses)
+│
+├── docs/               # Documentacao
+└── .cursor/            # Regras do Cursor IDE
 ```
 
-- **Extensão:** em Chrome, ir em `chrome://extensions` → Carregar sem compactação → escolher a pasta `extension`.
-- **Admin:** `firebase deploy` publica o conteúdo da pasta `admin`.
-- **Build:** executar `npm run build` (ou `scripts\build.bat`). Gera `extension\build`, ZIP na raiz, cópia em `admin\downloads\` e **faz deploy no Firebase Hosting** automaticamente.
+## Duas Extensoes, Mesmo Backend
 
-## Documentação
+Ambas as extensoes compartilham:
+- Mesmo sistema de licenciamento (Supabase Postgres)
+- Mesmo melhorador de prompt (OpenRouter via Supabase)
+- Mesma interface visual
+- Mesmo limite de arquivos: ate 10 anexos, 20MB por arquivo
+- Anexo por botao, colar (Ctrl+V) e drag & drop
 
-Ver pasta [docs/](docs/): FIREBASE_SETUP.md, DEPLOY.md, README.md.
+A diferenca esta APENAS no envio de mensagens:
+- **PROD** (`extension-prod/`): Extension → Supabase `send-prompt` → N8N → Lovable
+- **DEV** (`extension-dev/`): Extension → Supabase `send-message` → Lovable API direta
+
+## Seguranca (send-prompt / PROD)
+
+- Versao minima: 3.5.0
+- HMAC-SHA256 do body (anti-tampering)
+- Nonce anti-replay (armazenado em DB)
+- Janela de timestamp (5 min)
+- Rate limit: 20 req/min por licenca
+- Webhook URL so server-side
+
+## Stack
+
+- **Frontend:** Chrome Extension (Manifest V3)
+- **Backend:** Supabase Edge Functions (Deno/TypeScript)
+- **Banco de dados:** Supabase PostgreSQL (licencas)
+- **APIs externas:** Lovable API, OpenRouter API, N8N
+
+## Deploy
+
+### Edge Functions (Supabase)
+```powershell
+$env:SUPABASE_ACCESS_TOKEN = "seu_token"
+npx supabase functions deploy --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
+```
+
+### Extensoes (Chrome)
+Carregar em `chrome://extensions` com Developer Mode:
+- **Producao:** Apontar para `extension-prod/`
+- **Desenvolvimento:** Apontar para `extension-dev/`
