@@ -1,6 +1,6 @@
 /**
  * Configurações da Extensão Lovable Infinity
- * Sistema de Licenças Vinculadas ao Dispositivo (Device Fingerprint)
+ * Sistema de Licenças com Sessão Única (Device Fingerprint)
  */
 // Console mantido (ofuscação da build já protege o código)
 
@@ -9,22 +9,21 @@ const CONFIG = {
     CACHE_DURATION: 5 * 60 * 1000,
 
     // ============================================
-    // SUPABASE EDGE FUNCTIONS (todos os endpoints)
+    // VERCEL API ROUTES (todos os endpoints)
     // ============================================
-    SUPABASE_URL: 'https://svjglgrxqxqtonoobcdi.supabase.co',
-    SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2amdsZ3J4cXhxdG9ub29iY2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyNjUyMDMsImV4cCI6MjA4NTg0MTIwM30.6adWdnXXlrD_-6nrzdcviyKfVuBjWo57piuedOFdG0o',
+    API_BASE: 'https://lovable-infinity-panel.vercel.app',
 
     // Envio de mensagens (proxy N8N → Lovable)
-    SEND_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
-    SEND_MESSAGE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
+    SEND_PROMPT_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendPrompt',
+    SEND_MESSAGE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendPrompt',
     // Melhorador de prompt + Transcrição de áudio (exige JWT)
-    IMPROVE_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
-    TRANSCRIBE_AUDIO_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
-    // Licenciamento (Supabase Postgres)
-    VALIDATE_LICENSE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/validate-license',
+    IMPROVE_PROMPT_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
+    TRANSCRIBE_AUDIO_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
+    // Licenciamento (Firebase RTDB)
+    VALIDATE_LICENSE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/validateLicense',
     // Sessão JWT
-    VERIFY_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/verify-session',
-    REFRESH_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/refresh-session'
+    VERIFY_SESSION_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/verifySession',
+    REFRESH_SESSION_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/refreshSession'
 };
 
 let licenseCache = {};
@@ -101,19 +100,17 @@ async function getDeviceFingerprint() {
 }
 
 /**
- * Retorna headers base para chamadas às Edge Functions do Supabase
- * Inclui apikey para o gateway do Supabase
+ * Retorna headers base para chamadas à API Vercel
  */
-function getSupabaseHeaders(extraHeaders = {}) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (CONFIG.SUPABASE_ANON_KEY) {
-        headers['apikey'] = CONFIG.SUPABASE_ANON_KEY;
-    }
-    return { ...headers, ...extraHeaders };
+function getApiHeaders(extraHeaders = {}) {
+    return { 'Content-Type': 'application/json', ...extraHeaders };
 }
 
+// Alias de compatibilidade (popup.js e background.js podem usar o nome antigo)
+var getSupabaseHeaders = getApiHeaders;
+
 /**
- * Valida a chave de licença usando Supabase Edge Function
+ * Valida a chave de licença usando Vercel API
  */
 async function validateKeySecure(key) {
     if (!CONFIG.REQUIRE_LICENSE) {
@@ -126,7 +123,7 @@ async function validateKeySecure(key) {
     try {
         const response = await fetch(CONFIG.VALIDATE_LICENSE_ENDPOINT, {
             method: 'POST',
-            headers: getSupabaseHeaders(),
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 licenseKey: cleanKey,
                 deviceFingerprint: deviceFingerprint
@@ -135,13 +132,11 @@ async function validateKeySecure(key) {
 
         const result = await response.json();
 
-        // A API já retorna no formato { valid, message, license?, userData?, sessionToken?, refreshToken?, expiresAt? }
         return {
             valid: result.valid,
             message: result.message,
             license: result.license || null,
             userData: result.userData || null,
-            // JWT tokens (se o servidor retornar)
             sessionToken: result.sessionToken || null,
             refreshToken: result.refreshToken || null,
             sessionExpiresAt: result.expiresAt || null
@@ -214,7 +209,7 @@ async function verifySessionWithServer() {
 
         const response = await fetch(CONFIG.VERIFY_SESSION_ENDPOINT, {
             method: 'POST',
-            headers: getSupabaseHeaders({
+            headers: getApiHeaders({
                 'Authorization': 'Bearer ' + stored.sessionToken
             })
         });
@@ -236,7 +231,7 @@ async function tryRefreshSession() {
 
         const response = await fetch(CONFIG.REFRESH_SESSION_ENDPOINT, {
             method: 'POST',
-            headers: getSupabaseHeaders(),
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 refreshToken: stored.refreshToken,
                 deviceFingerprint: stored.deviceFingerprint || ''

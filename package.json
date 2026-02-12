@@ -1,15 +1,17 @@
 {
     "name": "lovable-infinity",
-    "version": "3.5.1",
+    "version": "3.5.4",
     "description": "Extensão Chrome Lovable Infinity - Build e deploy",
     "scripts": {
         "build": "node scripts/build.js"
     },
     "dependencies": {
-        "@supabase/supabase-js": "^2.45.0"
+        "firebase-admin": "^12.7.0",
+        "jsonwebtoken": "^9.0.3"
     },
     "devDependencies": {
         "archiver": "^7.0.1",
+        "google-auth-library": "^10.5.0",
         "javascript-obfuscator": "^4.1.1"
     },
     "engines": {

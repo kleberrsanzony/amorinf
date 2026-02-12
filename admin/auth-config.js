@@ -1,6 +1,6 @@
 /**
  * Configuração do Painel Admin - Lovable Infinity
- * Autenticação via Supabase Auth + API de licenças via Vercel
+ * Autenticação via Firebase Auth + API de licenças via Vercel
  */
 
 /** URLs dos endpoints de gestão de usuários do painel */
@@ -10,83 +10,76 @@ var UPDATE_PANEL_USER_API_URL = "https://lovable-infinity-panel.vercel.app/api/u
 var DELETE_PANEL_USER_API_URL = "https://lovable-infinity-panel.vercel.app/api/deletePanelUser";
 var PUBLISH_EXTENSION_RELEASE_API_URL = "https://lovable-infinity-panel.vercel.app/api/publishExtensionRelease";
 
-/** Supabase config */
-var SUPABASE_URL = "https://svjglgrxqxqtonoobcdi.supabase.co";
-var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2amdsZ3J4cXhxdG9ub29iY2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyNjUyMDMsImV4cCI6MjA4NTg0MTIwM30.6adWdnXXlrD_-6nrzdcviyKfVuBjWo57piuedOFdG0o";
+/** Firebase config */
+var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyA0ngBmNA0rx6413aJwYMbNDwt9nZKm5gg",
+    authDomain: "lovable2-e6f7f.firebaseapp.com",
+    databaseURL: "https://lovable2-e6f7f-default-rtdb.firebaseio.com",
+    projectId: "lovable2-e6f7f",
+    storageBucket: "lovable2-e6f7f.firebasestorage.app",
+    messagingSenderId: "943057084101",
+    appId: "1:943057084101:web:c3e1f940b7c5fa2cbc1aac"
+};
 
 /** Base da API de licenças (Vercel) */
 var LICENSES_API_BASE = "https://lovable-infinity-panel.vercel.app";
 
-var supabaseClient = null;
-var currentSession = null;
+var firebaseApp = null;
+var firebaseAuth = null;
+var _authCurrentUser = null;
 
 /**
- * Inicializar Supabase Auth
+ * Inicializar Firebase Auth
  */
 async function initializeAuth() {
-    if (supabaseClient) return true;
-    if (typeof supabase === 'undefined' || !supabase.createClient) {
-        console.error('Supabase JS não carregado');
+    if (firebaseApp) return true;
+    if (typeof firebase === 'undefined' || !firebase.initializeApp) {
+        console.error('Firebase JS SDK não carregado');
         return false;
     }
-    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    return true;
+    try {
+        firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+        firebaseAuth = firebase.auth();
+        return true;
+    } catch (e) {
+        console.error('Erro ao inicializar Firebase:', e);
+        return false;
+    }
 }
 
 function getAuth() {
-    if (!supabaseClient) return null;
+    if (!firebaseAuth) return null;
     return {
         onAuthStateChanged: function(callback) {
-            supabaseClient.auth.getSession().then(function(result) {
-                currentSession = result.data.session;
-                if (currentSession && currentSession.user) {
-                    callback(_wrapUser(currentSession.user, currentSession.access_token));
+            firebaseAuth.onAuthStateChanged(function(user) {
+                if (user) {
+                    _authCurrentUser = user;
+                    callback({
+                        uid: user.uid,
+                        email: user.email || '',
+                        displayName: user.displayName || user.email || '',
+                        getIdToken: function() { return user.getIdToken(); }
+                    });
                 } else {
-                    callback(null);
-                }
-            });
-            supabaseClient.auth.onAuthStateChange(function(event, session) {
-                currentSession = session;
-                if (session && session.user) {
-                    callback(_wrapUser(session.user, session.access_token));
-                } else {
+                    _authCurrentUser = null;
                     callback(null);
                 }
             });
         },
         signInWithEmailAndPassword: async function(email, password) {
-            var result = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
-            if (result.error) {
-                var err = new Error(result.error.message);
-                err.code = result.error.status === 400 ? 'auth/invalid-credential' : 'auth/unknown';
-                throw err;
-            }
-            currentSession = result.data.session;
-            return result.data;
+            var result = await firebaseAuth.signInWithEmailAndPassword(email, password);
+            _authCurrentUser = result.user;
+            return result;
         },
         createUserWithEmailAndPassword: async function(email, password) {
-            var result = await supabaseClient.auth.signUp({ email: email, password: password });
-            if (result.error) {
-                var err = new Error(result.error.message);
-                err.code = 'auth/signup-failed';
-                throw err;
-            }
-            currentSession = result.data.session;
-            return result.data;
+            var result = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+            _authCurrentUser = result.user;
+            return result;
         },
         signOut: async function() {
-            await supabaseClient.auth.signOut();
-            currentSession = null;
+            await firebaseAuth.signOut();
+            _authCurrentUser = null;
         }
-    };
-}
-
-function _wrapUser(user, accessToken) {
-    return {
-        uid: user.id,
-        email: user.email || '',
-        displayName: (user.user_metadata && user.user_metadata.full_name) || user.email || '',
-        getIdToken: function() { return Promise.resolve(accessToken); }
     };
 }
 
@@ -94,18 +87,18 @@ function _wrapUser(user, accessToken) {
  * Obter token de autenticação para chamadas à API
  */
 window.getAdminAuthToken = async function() {
-    if (currentSession && currentSession.access_token) {
-        var expiresAt = currentSession.expires_at;
-        if (expiresAt && Date.now() / 1000 > expiresAt - 60) {
-            var result = await supabaseClient.auth.refreshSession();
-            if (result.data.session) currentSession = result.data.session;
+    if (_authCurrentUser) {
+        try {
+            return await _authCurrentUser.getIdToken(false);
+        } catch (e) {
+            console.warn('Erro ao obter token:', e);
+            return null;
         }
-        return currentSession.access_token;
     }
-    var result = await supabaseClient.auth.getSession();
-    if (result.data.session) {
-        currentSession = result.data.session;
-        return currentSession.access_token;
+    // Tentar obter do auth diretamente
+    if (firebaseAuth && firebaseAuth.currentUser) {
+        _authCurrentUser = firebaseAuth.currentUser;
+        return await _authCurrentUser.getIdToken(false);
     }
     return null;
 };
@@ -203,4 +196,3 @@ async function syncLicensesWithCloud() {
         return { success: true, message: 'Sincronizadas ' + saved + ' licenças' };
     } catch (error) { return { success: false, message: 'Erro ao sincronizar.' }; }
 }
-

@@ -566,15 +566,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
                 console.log('[Lovable Infinity] Enviando via Edge Function. mode:', mode, '| ai_message_id:', aiMsgId, '| source:', aiMsgIdSource, '| files:', (files || []).length);
 
-                // Obter anon key do Supabase para autenticação no gateway
-                const supabaseAnonKey = (typeof CONFIG !== 'undefined' && CONFIG.SUPABASE_ANON_KEY)
-                    ? CONFIG.SUPABASE_ANON_KEY : '';
-
                 const edgeFnHeaders = { 'Content-Type': 'application/json' };
-                if (supabaseAnonKey) {
-                    edgeFnHeaders['apikey'] = supabaseAnonKey;
-                    edgeFnHeaders['Authorization'] = `Bearer ${supabaseAnonKey}`;
-                }
 
                 const response = await fetch(sendMessageUrl, {
                     method: 'POST',

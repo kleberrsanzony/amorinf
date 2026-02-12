@@ -51,10 +51,5 @@ supabase/.temp/
 # Vercel
 .vercel
 
-# Firebase (legado, removido do projeto)
-.firebase/
-.firebaserc
-firebase.json
-
 # Playwright/testes
 .playwright-mcp/

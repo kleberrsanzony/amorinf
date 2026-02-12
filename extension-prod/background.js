@@ -412,9 +412,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + stored.sessionToken
                 };
-                const supabaseAnonKey = (typeof CONFIG !== 'undefined' && CONFIG.SUPABASE_ANON_KEY)
-                    ? CONFIG.SUPABASE_ANON_KEY : '';
-                if (supabaseAnonKey) headers['apikey'] = supabaseAnonKey;
 
                 console.log('[Lovable Infinity PROD] Enviando via send-message. files:', (files || []).length);
 
@@ -836,9 +833,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 // Criar ZIP
                 const zipData = await ZipUtils.createZip(zipFiles);
 
-                // Converter para Blob URL (melhor que data URL para arquivos grandes)
-                const zipBlob = new Blob([zipData], { type: 'application/zip' });
-                const blobUrl = URL.createObjectURL(zipBlob);
+                // Converter para base64 data URL (URL.createObjectURL não funciona em Service Worker MV3)
+                let binary = '';
+                for (let i = 0; i < zipData.length; i++) {
+                    binary += String.fromCharCode(zipData[i]);
+                }
+                const base64 = btoa(binary);
+                const dataUrl = `data:application/zip;base64,${base64}`;
 
                 // Nome do arquivo
                 const now = new Date();
@@ -846,17 +847,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     (now.getMonth() + 1).toString().padStart(2, '0') +
                     now.getDate().toString().padStart(2, '0') + '-' +
                     now.getHours().toString().padStart(2, '0') +
-                    now.getMinutes().toString().padStart(2, '0');
+                    now.getMinutes().toString().padStart(2, '0') +
+                    now.getSeconds().toString().padStart(2, '0');
                 const slug = projectId ? projectId.slice(0, 8) : 'page';
                 const filename = 'html-page-' + slug + '-' + timestamp + '.zip';
 
                 chrome.downloads.download({
-                    url: blobUrl,
+                    url: dataUrl,
                     filename: filename,
                     saveAs: true
                 }, (downloadId) => {
-                    // Limpar blob URL após 60s
-                    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
                     if (chrome.runtime.lastError) {
                         sendResponse({ success: false, error: 'Erro ao iniciar download.' });
                     } else {

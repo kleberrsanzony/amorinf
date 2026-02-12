@@ -707,6 +707,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // --- Overlay de download (bloqueia interação visual) ---
+    const downloadOverlay = document.getElementById('download-overlay');
+    const downloadOverlayText = downloadOverlay ? downloadOverlay.querySelector('.download-overlay-text') : null;
+
+    function showDownloadOverlay(text) {
+        if (downloadOverlay) {
+            if (downloadOverlayText) downloadOverlayText.textContent = text || 'Preparando download...';
+            downloadOverlay.style.display = 'flex';
+        }
+    }
+    function hideDownloadOverlay() {
+        if (downloadOverlay) downloadOverlay.style.display = 'none';
+    }
+
     // Download do projeto (beta) – por enquanto apenas esqueleto
     async function downloadProject() {
         // Garante que estamos em um projeto do Lovable e com token
@@ -723,6 +737,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!downloadProjectBtn) return;
         downloadProjectBtn.disabled = true;
         downloadProjectBtn.classList.add('loading');
+        showDownloadOverlay('Baixando código-fonte... aguarde.');
 
         try {
             const response = await new Promise((resolve) => {
@@ -743,6 +758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } finally {
             downloadProjectBtn.disabled = false;
             downloadProjectBtn.classList.remove('loading');
+            hideDownloadOverlay();
         }
     }
 
@@ -757,7 +773,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!downloadHtmlBtn) return;
         downloadHtmlBtn.disabled = true;
         downloadHtmlBtn.classList.add('loading');
-        addSystemMessage('Capturando página... aguarde.');
+        showDownloadOverlay('Capturando página... aguarde.');
 
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -784,6 +800,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } finally {
             downloadHtmlBtn.disabled = false;
             downloadHtmlBtn.classList.remove('loading');
+            hideDownloadOverlay();
         }
     }
 
