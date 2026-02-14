@@ -39,6 +39,7 @@ O projeto usa **dois serviços**:
 │   ├── getLicense.js
 │   ├── updateLicense.js
 │   └── deleteLicense.js
+│   (listPanelUsers, createPanelUser, updatePanelUser, deletePanelUser, extensionRelease, authDebug)
 ├── extension-prod/     → Extensão Chrome (produção) – passa pelo build
 ├── extension-dev/      → Extensão Chrome (desenvolvimento) – nunca construída
 ├── supabase/           → Configuração Supabase
@@ -55,6 +56,9 @@ O projeto usa **dois serviços**:
 │   ├── build.js        → Build automatizado + deploy Vercel
 │   └── build.bat       → Atalho para o build
 ├── docs/               → Documentação
+│   ├── MAPA_FASE1.md   → Mapa do código (revisão geral)
+│   ├── ARQUITETURA.md  → Fluxos e variáveis de ambiente
+│   └── SUPABASE_ORGANIZACAO.md → Checklist Supabase (migrations, secrets)
 ├── vercel.json         → Configuração Vercel (API + estáticos)
 ├── package.json        → Dependências npm
 └── .gitignore
@@ -108,7 +112,11 @@ O script `scripts/build.js` (chamado por `npm run build`):
 - **API de licenças**: Token JWT do Supabase Auth (header Authorization: Bearer)
 - **Extensão**: Validação via Supabase Edge Function `validate-license`
 
-### 3.6. Banco de dados
+### 3.6. Endpoint de diagnóstico
+
+`/api/authDebug` só responde se o header `X-Debug-Secret` for igual à variável de ambiente `AUTH_DEBUG_SECRET` na Vercel. Sem isso, retorna 404 (evita expor diagnóstico em produção).
+
+### 3.7. Banco de dados
 
 Tabela principal: `licenses` no Supabase PostgreSQL.
 

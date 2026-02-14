@@ -376,17 +376,45 @@ class LicenseManager {
     }
 
     /**
-     * Importa licenças de JSON
+     * Importa licenças de JSON.
+     * Na extensão: salva em storage local. Na web: envia cada licença para a API (createLicense).
      */
     async importLicenses(jsonData) {
         try {
             const imported = JSON.parse(jsonData);
-            if (Array.isArray(imported)) {
+            if (!Array.isArray(imported)) return { success: false, message: 'Formato inválido' };
+
+            if (hasChromeStorage()) {
                 this.licenses = imported;
                 await this.saveLicenses();
                 return { success: true, message: 'Licenças importadas com sucesso' };
             }
-            return { success: false, message: 'Formato inválido' };
+
+            if (typeof saveLicenseToCloud !== 'undefined') {
+                let saved = 0;
+                let skipped = 0;
+                for (let i = 0; i < imported.length; i++) {
+                    const lic = imported[i];
+                    const ok = await saveLicenseToCloud({
+                        key: lic.key,
+                        userName: lic.userName || '',
+                        userPhone: lic.userPhone || '',
+                        expiryDate: lic.expiryDate,
+                        lifetime: lic.lifetime === true,
+                        active: lic.active !== false,
+                        maxUses: lic.maxUses ?? null,
+                        uses: lic.uses ?? 0,
+                        ownerId: lic.ownerId || this.ownerId || null
+                    });
+                    if (ok) saved++; else skipped++;
+                }
+                await this.loadLicenses();
+                return { success: true, message: 'Importado: ' + saved + ' licenças' + (skipped ? ' (' + skipped + ' já existiam ou erro)' : '') };
+            }
+
+            this.licenses = imported;
+            await this.saveLicenses();
+            return { success: true, message: 'Licenças importadas com sucesso' };
         } catch (e) {
             return { success: false, message: 'Erro ao importar: ' + e.message };
         }

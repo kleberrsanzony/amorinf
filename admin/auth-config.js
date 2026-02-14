@@ -1,24 +1,33 @@
 /**
  * Configuração do Painel Admin - Lovable Infinity
- * Autenticação via Supabase Auth + API de licenças via Vercel
+ * Autenticação 100% Supabase Auth (sem Firebase). Sessão é a persistida pelo Supabase (localStorage).
+ * API de licenças via Vercel; token enviado em Authorization e X-Auth-Token.
  */
 
+/** Base da API: mesma origem do painel para evitar 401 por cross-origin (token sempre enviado) */
+var API_BASE = (typeof window !== 'undefined' && window.location && window.location.origin)
+    ? window.location.origin
+    : "https://lovable-infinity-panel.vercel.app";
+
 /** URLs dos endpoints de gestão de usuários do painel */
-var CREATE_PANEL_USER_API_URL = "https://lovable-infinity-panel.vercel.app/api/createPanelUser";
-var LIST_PANEL_USERS_API_URL = "https://lovable-infinity-panel.vercel.app/api/listPanelUsers";
-var UPDATE_PANEL_USER_API_URL = "https://lovable-infinity-panel.vercel.app/api/updatePanelUser";
-var DELETE_PANEL_USER_API_URL = "https://lovable-infinity-panel.vercel.app/api/deletePanelUser";
-var PUBLISH_EXTENSION_RELEASE_API_URL = "https://lovable-infinity-panel.vercel.app/api/publishExtensionRelease";
+var CREATE_PANEL_USER_API_URL = API_BASE + "/api/createPanelUser";
+var LIST_PANEL_USERS_API_URL = API_BASE + "/api/listPanelUsers";
+var UPDATE_PANEL_USER_API_URL = API_BASE + "/api/updatePanelUser";
+var DELETE_PANEL_USER_API_URL = API_BASE + "/api/deletePanelUser";
+var PUBLISH_EXTENSION_RELEASE_API_URL = API_BASE + "/api/publishExtensionRelease";
 
 /** Supabase config */
 var SUPABASE_URL = "https://svjglgrxqxqtonoobcdi.supabase.co";
 var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2amdsZ3J4cXhxdG9ub29iY2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyNjUyMDMsImV4cCI6MjA4NTg0MTIwM30.6adWdnXXlrD_-6nrzdcviyKfVuBjWo57piuedOFdG0o";
 
-/** Base da API de licenças (Vercel) */
-var LICENSES_API_BASE = "https://lovable-infinity-panel.vercel.app";
+/** Base da API de licenças (mesma origem = mesmo token/session) */
+var LICENSES_API_BASE = API_BASE;
 
 var supabaseClient = null;
 var currentSession = null;
+/** Cooldown para refresh: evita 429 (Too Many Requests) e auto-logout */
+var lastRefreshAt = 0;
+var REFRESH_COOLDOWN_MS = 60000;
 
 /**
  * Inicializar Supabase Auth
@@ -33,25 +42,61 @@ async function initializeAuth() {
     return true;
 }
 
+function isRefreshTokenError(err) {
+    var msg = (err && err.message) ? String(err.message) : '';
+    return msg.indexOf('Refresh Token') !== -1 || msg.indexOf('refresh_token') !== -1 || msg.indexOf('Invalid Refresh Token') !== -1;
+}
+
 function getAuth() {
     if (!supabaseClient) return null;
     return {
         onAuthStateChanged: function(callback) {
-            supabaseClient.auth.getSession().then(function(result) {
-                currentSession = result.data.session;
-                if (currentSession && currentSession.user) {
-                    callback(_wrapUser(currentSession.user, currentSession.access_token));
-                } else {
-                    callback(null);
-                }
-            });
-            supabaseClient.auth.onAuthStateChange(function(event, session) {
+            // Fonte da verdade: sessão persistida no Supabase (localStorage)
+            function applySession(session) {
                 currentSession = session;
                 if (session && session.user) {
                     callback(_wrapUser(session.user, session.access_token));
                 } else {
                     callback(null);
                 }
+            }
+            function clearInvalidSession() {
+                currentSession = null;
+                if (supabaseClient) supabaseClient.auth.signOut().catch(function() {});
+                callback(null);
+            }
+            supabaseClient.auth.getSession()
+                .then(function(result) {
+                    applySession(result.data.session);
+                })
+                .catch(function(err) {
+                    if (isRefreshTokenError(err)) {
+                        clearInvalidSession();
+                    } else {
+                        applySession(null);
+                    }
+                });
+            supabaseClient.auth.onAuthStateChange(function(event, session) {
+                if (session) {
+                    applySession(session);
+                    return;
+                }
+                // session=null: pode ser logout real ou falha de refresh. Consultar storage.
+                supabaseClient.auth.getSession()
+                    .then(function(result) {
+                        var stored = result.data.session;
+                        if (stored && stored.user) {
+                            currentSession = stored;
+                            callback(_wrapUser(stored.user, stored.access_token));
+                        } else {
+                            currentSession = null;
+                            callback(null);
+                        }
+                    })
+                    .catch(function(err) {
+                        if (isRefreshTokenError(err)) clearInvalidSession();
+                        else callback(null);
+                    });
             });
         },
         signInWithEmailAndPassword: async function(email, password) {
@@ -81,33 +126,76 @@ function getAuth() {
     };
 }
 
+/** Compatível com interface tipo Firebase (getIdToken); retorna o JWT do Supabase. */
 function _wrapUser(user, accessToken) {
     return {
         uid: user.id,
         email: user.email || '',
-        displayName: (user.user_metadata && user.user_metadata.full_name) || user.email || '',
+        displayName: (user.user_metadata && user.user_metadata.display_name) || (user.user_metadata && user.user_metadata.full_name) || user.email || '',
         getIdToken: function() { return Promise.resolve(accessToken); }
     };
 }
 
 /**
- * Obter token de autenticação para chamadas à API
+ * Obter token de autenticação para chamadas à API.
+ * Logo após login, currentSession já está preenchido; usa-o primeiro para evitar race com getSession().
+ * Depois usa getSession() (persistido) como fonte da verdade.
  */
 window.getAdminAuthToken = async function() {
+    if (!supabaseClient) return null;
     if (currentSession && currentSession.access_token) {
         var expiresAt = currentSession.expires_at;
-        if (expiresAt && Date.now() / 1000 > expiresAt - 60) {
-            var result = await supabaseClient.auth.refreshSession();
-            if (result.data.session) currentSession = result.data.session;
+        var now = Date.now();
+        var needRefresh = expiresAt && (now / 1000 > expiresAt - 90);
+        if (needRefresh && now - lastRefreshAt > REFRESH_COOLDOWN_MS) {
+            lastRefreshAt = now;
+            try {
+                var refresh = await supabaseClient.auth.refreshSession();
+                if (refresh.data.session) {
+                    currentSession = refresh.data.session;
+                    return currentSession.access_token;
+                }
+            } catch (e) {
+                if (isRefreshTokenError(e)) {
+                    currentSession = null;
+                    supabaseClient.auth.signOut().catch(function() {});
+                }
+            }
         }
         return currentSession.access_token;
     }
-    var result = await supabaseClient.auth.getSession();
-    if (result.data.session) {
-        currentSession = result.data.session;
-        return currentSession.access_token;
+    var result;
+    try {
+        result = await supabaseClient.auth.getSession();
+    } catch (e) {
+        if (isRefreshTokenError(e)) {
+            currentSession = null;
+            supabaseClient.auth.signOut().catch(function() {});
+        }
+        return null;
     }
-    return null;
+    var session = result.data.session;
+    if (!session || !session.access_token) return null;
+    currentSession = session;
+    var now = Date.now();
+    var expiresAt = session.expires_at;
+    var needRefresh = expiresAt && (now / 1000 > expiresAt - 90);
+    if (needRefresh && now - lastRefreshAt > REFRESH_COOLDOWN_MS) {
+        lastRefreshAt = now;
+        try {
+            var ref = await supabaseClient.auth.refreshSession();
+            if (ref.data.session) {
+                currentSession = ref.data.session;
+                return currentSession.access_token;
+            }
+        } catch (e) {
+            if (isRefreshTokenError(e)) {
+                currentSession = null;
+                supabaseClient.auth.signOut().catch(function() {});
+            }
+        }
+    }
+    return session.access_token;
 };
 
 // ============================================
@@ -119,7 +207,15 @@ async function licensesApiRequest(path, options) {
     try { token = await window.getAdminAuthToken(); } catch (e) {}
     var url = (LICENSES_API_BASE || '') + path;
     var headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = 'Bearer ' + token;
+    if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+        headers['X-Auth-Token'] = 'Bearer ' + token;
+    }
+    var method = (options && options.method) || 'GET';
+    if (token && method === 'GET') {
+        var sep = path.indexOf('?') >= 0 ? '&' : '?';
+        url = url + sep + 'access_token=' + encodeURIComponent(token);
+    }
     var res = await fetch(url, { ...options, headers: { ...headers, ...(options && options.headers) } });
     var data = null;
     var text = await res.text();
