@@ -165,6 +165,27 @@ function setupEventListeners() {
     document.getElementById('btn-create-submit')?.addEventListener('click', submitCreateLicense);
     document.getElementById('btn-create-copy')?.addEventListener('click', copyCreatedLicense);
 
+    document.getElementById('btn-open-test-keys-modal')?.addEventListener('click', openTestKeysModal);
+    document.getElementById('modal-test-keys-close')?.addEventListener('click', closeTestKeysModal);
+    document.getElementById('btn-test-keys-cancel')?.addEventListener('click', closeTestKeysModal);
+    document.getElementById('btn-test-keys-generate')?.addEventListener('click', submitTestKeys);
+    document.getElementById('test-keys-list')?.addEventListener('click', (e) => {
+        const copyBtn = e.target.closest('.test-key-copy');
+        if (!copyBtn) return;
+        const row = copyBtn.closest('.test-key-row');
+        const key = row?.querySelector('.test-key-value')?.value?.trim();
+        if (!key) return;
+        navigator.clipboard.writeText(key).then(() => {
+            const feedback = row?.querySelector('.test-key-feedback');
+            if (feedback) {
+                feedback.textContent = 'Chave copiada';
+                feedback.classList.add('show');
+                setTimeout(() => { feedback.classList.remove('show'); }, 2000);
+            }
+        }).catch(() => showAlert('Erro ao copiar.', 'error'));
+    });
+    document.getElementById('modal-test-keys')?.addEventListener('click', (e) => { if (e.target.id === 'modal-test-keys') closeTestKeysModal(); });
+
     document.getElementById('modal-edit-close')?.addEventListener('click', closeEditModal);
     document.getElementById('btn-edit-cancel')?.addEventListener('click', closeEditModal);
     document.getElementById('btn-edit-submit')?.addEventListener('click', submitEditLicense);
@@ -598,6 +619,74 @@ function openCreateModal() {
 
 function closeCreateModal() {
     document.getElementById('modal-create').classList.remove('show');
+}
+
+function openTestKeysModal() {
+    document.getElementById('test-keys-expiry-hours').value = '1';
+    document.getElementById('test-keys-quantity').value = '1';
+    const resultEl = document.getElementById('test-keys-result');
+    const listEl = document.getElementById('test-keys-list');
+    if (resultEl) resultEl.style.display = 'none';
+    if (listEl) listEl.innerHTML = '';
+    document.getElementById('modal-test-keys').classList.add('show');
+}
+
+function closeTestKeysModal() {
+    document.getElementById('modal-test-keys').classList.remove('show');
+}
+
+async function submitTestKeys() {
+    const expiryHours = parseFloat(document.getElementById('test-keys-expiry-hours')?.value) || 1;
+    let quantity = parseInt(document.getElementById('test-keys-quantity')?.value, 10) || 1;
+    if (quantity < 1) quantity = 1;
+    if (quantity > 20) {
+        showAlert('Quantidade deve ser entre 1 e 20.', 'error');
+        return;
+    }
+    const btn = document.getElementById('btn-test-keys-generate');
+    if (btn) btn.disabled = true;
+    try {
+        const keys = [];
+        for (let i = 0; i < quantity; i++) {
+            const license = await licenseManager.generateTestLicense(expiryHours, quantity > 1 ? i + 1 : null);
+            keys.push(license.key);
+        }
+        const listEl = document.getElementById('test-keys-list');
+        const resultEl = document.getElementById('test-keys-result');
+        if (listEl) {
+            listEl.innerHTML = '';
+            keys.forEach(function (key) {
+                const row = document.createElement('div');
+                row.className = 'test-key-row';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'test-key-value';
+                input.readOnly = true;
+                input.value = key;
+                const copyBtn = document.createElement('button');
+                copyBtn.type = 'button';
+                copyBtn.className = 'test-key-copy';
+                copyBtn.setAttribute('aria-label', 'Copiar chave');
+                copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                const feedback = document.createElement('span');
+                feedback.className = 'test-key-feedback';
+                row.appendChild(input);
+                row.appendChild(copyBtn);
+                row.appendChild(feedback);
+                listEl.appendChild(row);
+            });
+        }
+        if (resultEl) resultEl.style.display = 'block';
+        loadMain();
+        const hourLabel = expiryHours === 0.5 ? '30 minutos' : expiryHours === 1 ? '1 hora' : `${expiryHours} horas`;
+        showAlert(quantity === 1
+            ? `1 chave de teste criada. Válida por ${hourLabel}. Copie e envie ao cliente.`
+            : `${quantity} chaves de teste criadas. Válidas por ${hourLabel}. Copie e envie ao cliente.`, 'success');
+    } catch (err) {
+        showAlert('Erro ao gerar chaves: ' + (err.message || err), 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function submitCreateLicense() {

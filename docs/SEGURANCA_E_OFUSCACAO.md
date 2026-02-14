@@ -8,8 +8,7 @@ Este documento descreve o fluxo de build com ofuscação anti-IA e a estrutura d
 
 | Extensão         | Build | Distribuição      |
 |-----------------|-------|-------------------|
-| **extension-prod/** | Sim – ofuscação, HTML escondido, ZIP, deploy | Usuários finais |
-| **extension-dev/**  | Não – nunca passa pelo build | Apenas desenvolvimento |
+| **extension-prod/** | Sim – ofuscação, ZIP, deploy | Usuários finais (única extensão) |
 
 ---
 

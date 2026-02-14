@@ -13,9 +13,14 @@ const CONFIG = {
     // ============================================
     API_BASE: 'https://lovable-infinity-panel.vercel.app',
 
+<<<<<<<< HEAD:Futura Extensao/config.js
+    // Envio de mensagens (proxy para Lovable API)
+    SEND_MESSAGE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendMessage',
+========
     // Envio de mensagens (proxy N8N → Lovable)
-    SEND_PROMPT_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendPrompt',
-    SEND_MESSAGE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendPrompt',
+    SEND_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
+    SEND_MESSAGE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
+>>>>>>>> feature/build-refactor-extension:extension/config.js
     // Melhorador de prompt + Transcrição de áudio (exige JWT)
     IMPROVE_PROMPT_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
     TRANSCRIBE_AUDIO_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
@@ -106,7 +111,7 @@ function getApiHeaders(extraHeaders = {}) {
     return { 'Content-Type': 'application/json', ...extraHeaders };
 }
 
-// Alias de compatibilidade (popup.js e background.js podem usar o nome antigo)
+// Alias de compatibilidade
 var getSupabaseHeaders = getApiHeaders;
 
 /**
@@ -148,16 +153,27 @@ async function validateKeySecure(key) {
 }
 
 async function verifyIntegrity() {
+    // Tenta ambos os nomes: dev = config.js, build = c1.js (evita ERR_FILE_NOT_FOUND)
+    const scriptNames = ['config.js', 'c1.js'];
     try {
-        const response = await fetch(chrome.runtime.getURL('config.js'));
-        const code = await response.text();
+        let code = null;
+        for (const name of scriptNames) {
+            try {
+                const response = await fetch(chrome.runtime.getURL(name));
+                if (response && response.ok) {
+                    code = await response.text();
+                    break;
+                }
+            } catch (_) {
+                continue;
+            }
+        }
+        if (!code) return true; // não bloquear se não conseguir carregar
         const hash = await hashString(code);
-        
         const stored = await chrome.storage.local.get('codeHash');
         if (stored.codeHash && stored.codeHash !== hash) {
             return false;
         }
-        
         await chrome.storage.local.set({ codeHash: hash });
         return true;
     } catch (error) {

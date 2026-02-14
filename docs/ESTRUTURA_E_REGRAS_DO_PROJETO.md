@@ -39,8 +39,8 @@ O projeto usa **dois serviços**:
 │   ├── getLicense.js
 │   ├── updateLicense.js
 │   └── deleteLicense.js
-├── extension-prod/     → Extensão Chrome (produção) – passa pelo build
-├── extension-dev/      → Extensão Chrome (desenvolvimento) – nunca construída
+│   (listPanelUsers, createPanelUser, updatePanelUser, deletePanelUser, extensionRelease, authDebug)
+├── extension-prod/     → Extensão Chrome (produção) – única extensão; passa pelo build
 ├── supabase/           → Configuração Supabase
 │   ├── functions/      → Edge Functions (Deno/TypeScript)
 │   │   ├── _shared/    → Utilitários compartilhados
@@ -55,6 +55,9 @@ O projeto usa **dois serviços**:
 │   ├── build.js        → Build automatizado + deploy Vercel
 │   └── build.bat       → Atalho para o build
 ├── docs/               → Documentação
+│   ├── MAPA_FASE1.md   → Mapa do código (revisão geral)
+│   ├── ARQUITETURA.md  → Fluxos e variáveis de ambiente
+│   └── SUPABASE_ORGANIZACAO.md → Checklist Supabase (migrations, secrets)
 ├── vercel.json         → Configuração Vercel (API + estáticos)
 ├── package.json        → Dependências npm
 └── .gitignore
@@ -66,7 +69,7 @@ O projeto usa **dois serviços**:
 
 ### 3.1. Onde cada coisa vive
 
-- **Extensão Chrome** → `extension-prod/` (build) e `extension-dev/` (dev)
+- **Extensão Chrome** → `extension-prod/` (build; é a única extensão do projeto)
 - **Painel admin** → `admin/`
 - **API de licenças** → `api/`
 - **Edge Functions Supabase** → `supabase/functions/`
@@ -108,11 +111,23 @@ O script `scripts/build.js` (chamado por `npm run build`):
 - **API de licenças**: Token JWT do Supabase Auth (header Authorization: Bearer)
 - **Extensão**: Validação via Supabase Edge Function `validate-license`
 
-### 3.6. Banco de dados
+### 3.6. Endpoint de diagnóstico
+
+`/api/authDebug` só responde se o header `X-Debug-Secret` for igual à variável de ambiente `AUTH_DEBUG_SECRET` na Vercel. Sem isso, retorna 404 (evita expor diagnóstico em produção).
+
+### 3.7. Banco de dados
 
 Tabela principal: `licenses` no Supabase PostgreSQL.
 
-Colunas: `key`, `active`, `lifetime`, `expiry_date`, `max_uses`, `uses`, `user_name`, `activated_device_fingerprint`, `activated_date`, `last_access_date`, `active_session_device`, `active_session_last_ping`, `activated`, `created_at`, `updated_at`.
+Colunas: `key`, `active`, `lifetime`, `expiry_date`, `max_uses`, `uses`, `user_name`, `user_phone`, `owner_id`, `activated_device_fingerprint`, `activated_date`, `last_access_date`, `active_session_device`, `active_session_last_ping`, `activated`, `created_at`, `updated_at`.
+
+### 3.8. Estrutura e código limpos
+
+- **Uma pasta por função:** extensão em `extension-prod/`, painel em `admin/`, API em `api/`, backend em `supabase/`. Não misturar.
+- **Raiz:** só configuração (`package.json`, `vercel.json`, `.gitignore`, `README.md`).
+- **Documentação:** tudo em `docs/`; README na raiz é o ponto de entrada; detalhes em ESTRUTURA e ARQUITETURA.
+- **Sem código morto:** remover referências a pastas/arquivos que não existem mais (ex.: extension-dev foi removido).
+- **Comentários:** manter apenas os que ajudam (config, regras de negócio); evitar comentários óbvios ou desatualizados.
 
 ---
 

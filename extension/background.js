@@ -1,10 +1,8 @@
 // Background service worker - Lovable Infinity (baseado na lógica funcional do PROMPTXV2)
 // Console mantido (ofuscação da build já protege)
 
-// Importa utilitários auxiliares (c3.js em produção, zip-utils.js em dev)
-try { importScripts('c3.js'); } catch(e) { importScripts('zip-utils.js'); }
-
-// Importa configurações (URLs de API, Supabase, etc.)
+// Importa utilitários e config (nomes de dev; no build o script substitui por c6.js e c1.js)
+try { importScripts('zip-utils.js'); } catch(e) { console.warn('[Lovable Infinity] zip-utils.js não encontrado no service worker'); }
 try { importScripts('config.js'); } catch(e) { console.warn('[Lovable Infinity] config.js não encontrado no service worker'); }
 
 const LOVABLE_ORIGIN = 'https://lovable.dev';
@@ -250,135 +248,6 @@ chrome.webRequest.onBeforeRequest.addListener(
     ["requestBody"]
 );
 
-// ============================================
-// GERAÇÃO DE IDs no formato Lovable (Crockford Base32)
-// Usados pelo fallback de envio direto
-// ============================================
-const CROCKFORD_CHARS = '0123456789abcdefghjkmnpqrstvwxyz';
-
-function generateCrockfordId(length) {
-    let result = '';
-    const arr = new Uint8Array(length);
-    crypto.getRandomValues(arr);
-    for (let i = 0; i < length; i++) {
-        result += CROCKFORD_CHARS[arr[i] % CROCKFORD_CHARS.length];
-    }
-    return result;
-}
-
-function bgGenerateMsgId() { return 'umsg_' + generateCrockfordId(28); }
-function bgGenerateErrorId() { return 'error_' + generateCrockfordId(28); }
-function bgGenerateAiMsgId() { return 'aimsg_' + generateCrockfordId(28); }
-
-function bgBuildErrorFixPayload(userMessage, aiMessageId) {
-    const now = Date.now();
-    const errorMsg = `Application behavior does not match expected output. User reports: ${userMessage}`;
-    const stackTrace = `Error: ${errorMsg}\n    at UserFeedbackHandler (src/components/App.tsx:142:8)\n    at renderWithHooks (node_modules/react-dom/cjs/react-dom.development.js:14985:18)\n    at mountIndeterminateComponent (node_modules/react-dom/cjs/react-dom.development.js:17811:13)`;
-    const errorDetail = { timestamp: now, error_type: "RUNTIME_ERROR", filename: "src/components/App.tsx", lineno: 142, colno: 8, stack: stackTrace, has_blank_screen: false };
-    const formattedMessage = `Fix these issues\n\n${errorMsg}\n\n\`\`\`\n${JSON.stringify(errorDetail, null, 2)}\n\`\`\`\n`;
-    return {
-        id: bgGenerateMsgId(), message: formattedMessage, mode: "instant", contains_error: true,
-        error_ids: [bgGenerateErrorId()], ai_message_id: aiMessageId || bgGenerateAiMsgId(),
-        current_page: "/", view: "preview", view_description: "The user is currently viewing the preview. ",
-        model: null, session_replay: "[]", client_logs: [], network_requests: [],
-        runtime_errors: [{ timestamp: now - 1000, error_type: "RUNTIME_ERROR", message: errorMsg, filename: "src/components/App.tsx", lineno: 142, colno: 8, stack: stackTrace, has_blank_screen: false }],
-        integration_metadata: { browser: { preview_viewport_width: 960, preview_viewport_height: 861 } }
-    };
-}
-
-function bgBuildMinimalPayload(userMessage, aiMessageId) {
-    return {
-        id: bgGenerateMsgId(), message: userMessage, mode: "instant", contains_error: true,
-        ai_message_id: aiMessageId || bgGenerateAiMsgId(), current_page: "/",
-        view: "code", view_description: "The user is currently viewing the code.", model: null
-    };
-}
-
-// ============================================
-// FALLBACK: Envio direto à API do Lovable
-// Usado quando Supabase não está configurado
-// ============================================
-async function sendLovableChatDirect(request, sendResponse, aiMsgId, aiMsgIdSource, gitSha) {
-    try {
-        const { projectId, token, message, files, mode } = request;
-
-        // Montar payload localmente
-        let payload;
-        if (mode === 'min') payload = bgBuildMinimalPayload(message, aiMsgId);
-        else payload = bgBuildErrorFixPayload(message, aiMsgId);
-
-        // Upload de arquivos (se houver)
-        const uploadedFiles = [];
-        const optimisticImageUrls = [];
-
-        if (files && files.length > 0) {
-            console.log('[Lovable Infinity] [FALLBACK] Enviando', files.length, 'arquivo(s)...');
-            const uploadHeaders = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
-            if (gitSha) uploadHeaders['X-Client-Git-SHA'] = gitSha;
-
-            for (const fileData of files) {
-                try {
-                    const uploadUrlResp = await fetch('https://api.lovable.dev/files/generate-upload-url', {
-                        method: 'POST', headers: uploadHeaders,
-                        body: JSON.stringify({ file_name: fileData.name, content_type: fileData.type, status: 'uploading' })
-                    });
-                    if (!uploadUrlResp.ok) continue;
-                    const uploadUrlData = await uploadUrlResp.json();
-                    const signedUrl = uploadUrlData.url;
-                    const fileId = uploadUrlData.id || uploadUrlData.file_id || null;
-                    if (!signedUrl) continue;
-
-                    const blobResp = await fetch(fileData.data);
-                    const blob = await blobResp.blob();
-                    const putResp = await fetch(signedUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': fileData.type } });
-                    if (!putResp.ok) continue;
-
-                    let resolvedFileId = fileId;
-                    if (!resolvedFileId) {
-                        const urlMatch = signedUrl.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-                        if (urlMatch) resolvedFileId = urlMatch[1];
-                    }
-                    if (resolvedFileId) {
-                        uploadedFiles.push({ file_id: resolvedFileId, file_name: fileData.name, type: 'user_upload' });
-                        if (fileData.type && fileData.type.startsWith('image/')) optimisticImageUrls.push(signedUrl.split('?')[0]);
-                    }
-                } catch (uploadErr) {
-                    console.warn('[Lovable Infinity] [FALLBACK] Erro upload:', uploadErr.message);
-                }
-            }
-        }
-
-        if (uploadedFiles.length > 0) {
-            payload.files = uploadedFiles;
-            if (optimisticImageUrls.length > 0) payload.optimisticImageUrls = optimisticImageUrls;
-        }
-
-        const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
-        if (gitSha) headers['X-Client-Git-SHA'] = gitSha;
-
-        const url = `https://api.lovable.dev/projects/${projectId}/chat`;
-        const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
-        const text = await response.text();
-        let json = {};
-        try { json = JSON.parse(text); } catch (e) { }
-
-        if (response.ok || response.status === 202) {
-            try {
-                const aimsgMatches = text.match(/aimsg_[a-z0-9]{10,}/g);
-                if (aimsgMatches && aimsgMatches.length > 0) {
-                    chrome.storage.local.set({ lovable_last_aimsg: aimsgMatches[aimsgMatches.length - 1] });
-                }
-            } catch (e) {}
-            sendResponse({ success: true, status: response.status, data: json, text: text });
-        } else {
-            const errorMsg = json.message || json.error || response.statusText || 'Erro desconhecido';
-            sendResponse({ success: false, error: `Erro ${response.status}: ${errorMsg}`, debug: { ai_message_id: payload.ai_message_id, source: aiMsgIdSource } });
-        }
-    } catch (error) {
-        sendResponse({ success: false, error: 'Falha na conexão (fallback): ' + error.message });
-    }
-}
-
 // Manipulador de mensagens
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "ping") {
@@ -496,117 +365,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
-    // Envio de mensagem via Supabase Edge Function (proxy server-side)
-    // A Edge Function cuida de: upload de arquivos, montagem do payload, envio à API do Lovable
+    // Envio de mensagem via Supabase Edge Function send-message (direto → Lovable API)
     if (request.action === "sendLovableChat") {
         (async () => {
             try {
                 const { projectId, token, message, files, mode } = request;
-                if (!projectId || !token || !message) {
+                if (!projectId || !token) {
                     sendResponse({ success: false, error: 'Dados incompletos para envio.' });
                     return;
                 }
-
-                // Buscar o Git SHA e o último ai_message_id capturados
-                const stored = await chrome.storage.local.get(['lovable_git_sha', 'lovable_last_aimsg']);
-                const gitSha = stored.lovable_git_sha || '';
-                let aiMsgId = stored.lovable_last_aimsg || null;
-                let aiMsgIdSource = aiMsgId ? 'storage' : 'none';
-
-                // Se não temos ai_message_id no storage, extrair sob demanda via DOM
-                if (!aiMsgId) {
-                    try {
-                        const tabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });
-                        if (tabs.length > 0) {
-                            const results = await chrome.scripting.executeScript({
-                                target: { tabId: tabs[0].id },
-                                world: 'MAIN',
-                                func: () => {
-                                    const ids = [];
-                                    document.querySelectorAll('div[id^="aimsg_"]').forEach(el => ids.push(el.id));
-                                    return ids;
-                                }
-                            });
-                            if (results && results[0] && results[0].result && results[0].result.length > 0) {
-                                const ids = results[0].result;
-                                aiMsgId = ids[ids.length - 1];
-                                aiMsgIdSource = 'dom(' + ids.length + ' ids)';
-                                chrome.storage.local.set({ lovable_last_aimsg: aiMsgId });
-                                console.log('[Lovable Infinity] ai_message_id extraído via DOM:', aiMsgId);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('[Lovable Infinity] Falha ao extrair ai_message_id:', e.message);
-                        aiMsgIdSource = 'error: ' + e.message;
-                    }
+                if (!message && (!files || files.length === 0)) {
+                    sendResponse({ success: false, error: 'Informe uma mensagem ou anexe arquivos.' });
+                    return;
                 }
 
-                // Montar payload simples para a Edge Function
-                const edgeFnPayload = {
-                    token: token,
-                    projectId: projectId,
-                    message: message,
-                    mode: mode || 'error',
-                    ai_message_id: aiMsgId || undefined,
-                    git_sha: gitSha || undefined,
-                    files: files || undefined
-                };
-
-                // Obter URL da Edge Function do CONFIG (importado via config.js)
                 const sendMessageUrl = (typeof CONFIG !== 'undefined' && CONFIG.SEND_MESSAGE_ENDPOINT)
                     ? CONFIG.SEND_MESSAGE_ENDPOINT
                     : null;
 
-                if (!sendMessageUrl || sendMessageUrl.includes('<YOUR_PROJECT_REF>')) {
-                    // FALLBACK: Se Supabase não está configurado, usa método direto (legado)
-                    console.warn('[Lovable Infinity] Supabase não configurado, usando envio direto (legado)');
-                    await sendLovableChatDirect(request, sendResponse, aiMsgId, aiMsgIdSource, gitSha);
+                if (!sendMessageUrl) {
+                    sendResponse({ success: false, error: 'Endpoint de envio não configurado.' });
                     return;
                 }
 
-                console.log('[Lovable Infinity] Enviando via Edge Function. mode:', mode, '| ai_message_id:', aiMsgId, '| source:', aiMsgIdSource, '| files:', (files || []).length);
+                // Buscar sessionToken, ai_message_id e git_sha
+                const stored = await chrome.storage.local.get(['sessionToken', 'lovable_last_aimsg', 'lovable_git_sha']);
 
-                const edgeFnHeaders = { 'Content-Type': 'application/json' };
+                if (!stored.sessionToken) {
+                    sendResponse({ success: false, error: 'Sessão expirada. Faça login novamente.' });
+                    return;
+                }
+
+                const payload = {
+                    message: message,
+                    projectId: projectId,
+                    token: token,
+                    mode: mode || 'error',
+                    ai_message_id: stored.lovable_last_aimsg || undefined,
+                    git_sha: stored.lovable_git_sha || undefined,
+                    files: (files && files.length > 0) ? files : undefined
+                };
+
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + stored.sessionToken
+                };
 
                 const response = await fetch(sendMessageUrl, {
                     method: 'POST',
-                    headers: edgeFnHeaders,
-                    body: JSON.stringify(edgeFnPayload)
+                    headers: headers,
+                    body: JSON.stringify(payload)
                 });
 
                 const result = await response.json();
 
                 if (result.success) {
-                    // Atualizar ai_message_id com o novo retornado pela Edge Function
+                    // Atualizar ai_message_id se veio novo na resposta
                     if (result.ai_message_id) {
                         chrome.storage.local.set({ lovable_last_aimsg: result.ai_message_id });
-                        console.log('[Lovable Infinity] ai_message_id atualizado:', result.ai_message_id);
                     }
-
-                    // Backup: extrair ai_message_id da página após 3s
-                    setTimeout(async () => {
-                        try {
-                            const tabs = await chrome.tabs.query({ url: "https://lovable.dev/*" });
-                            if (tabs.length > 0) {
-                                chrome.scripting.executeScript({
-                                    target: { tabId: tabs[0].id },
-                                    world: 'MAIN',
-                                    func: () => {
-                                        const ids = [];
-                                        document.querySelectorAll('div[id^="aimsg_"]').forEach(el => ids.push(el.id));
-                                        return ids;
-                                    }
-                                }).then(results => {
-                                    if (results && results[0] && results[0].result && results[0].result.length > 0) {
-                                        const latestId = results[0].result[results[0].result.length - 1];
-                                        chrome.storage.local.set({ lovable_last_aimsg: latestId });
-                                        console.log('[Lovable Infinity] ai_message_id atualizado via DOM:', latestId);
-                                    }
-                                }).catch(() => {});
-                            }
-                        } catch (e) {}
-                    }, 3000);
-
                     sendResponse({
                         success: true,
                         status: result.status || 200,
@@ -616,8 +433,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 } else {
                     sendResponse({
                         success: false,
-                        error: result.error || 'Erro na Edge Function',
-                        debug: { ai_message_id: aiMsgId, source: aiMsgIdSource }
+                        error: result.error || 'Erro no envio da mensagem'
                     });
                 }
             } catch (error) {
@@ -651,7 +467,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
-    // Download da página como HTML - captura o preview renderizado com CSS e imagens
+    // Download da página como HTML - captura o preview renderizado com CSS, imagens, vídeos e fontes
     if (request.action === "downloadAsHTML") {
         const tabId = request.tabId;
         const projectId = (request.projectId || '').trim();
@@ -663,99 +479,131 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         (async () => {
             try {
-                // Injeta script de captura em TODOS os frames da aba
+                // ============================================================
+                // FASE 1: Content Script — coletar HTML, CSS e URLs de recursos
+                // ============================================================
                 const results = await chrome.scripting.executeScript({
                     target: { tabId: tabId, allFrames: true },
                     func: function() {
                         // --- Esta função roda DENTRO de cada frame ---
-                        // Ignora a página principal do Lovable
                         if (location.hostname.includes('lovable.dev')) return null;
-                        // Ignora frames minúsculos (trackers, ads)
                         if (!document.body || document.body.scrollWidth < 200 || document.body.scrollHeight < 200) return null;
 
-                        const result = {
+                        var baseUrl = location.href;
+                        function resolveUrl(url) {
+                            if (!url || url.startsWith('data:') || url.startsWith('blob:')) return null;
+                            try { return new URL(url, baseUrl).href; } catch(e) { return null; }
+                        }
+
+                        var result = {
                             isPreview: true,
                             bodySize: document.body.innerHTML.length,
-                            images: [],
+                            resources: [],      // { url, type, originalRef }
+                            dataResources: [],   // { dataUrl, type, originalRef } para data: URLs inline
                             cssText: '',
                             html: '',
-                            title: document.title || 'Página'
+                            title: document.title || 'Página',
+                            pageUrl: baseUrl
                         };
+                        var seenUrls = {};
+
+                        function addResource(url, type, originalRef) {
+                            var resolved = resolveUrl(url);
+                            if (!resolved || seenUrls[resolved]) return;
+                            seenUrls[resolved] = true;
+                            result.resources.push({ url: resolved, type: type, originalRef: originalRef || url });
+                        }
 
                         // 1. Coletar CSS de todas as stylesheets acessíveis
-                        const allCSS = [];
-                        const capturedHrefs = new Set();
+                        var allCSS = [];
+                        var capturedHrefs = {};
                         try {
-                            for (let i = 0; i < document.styleSheets.length; i++) {
+                            for (var i = 0; i < document.styleSheets.length; i++) {
                                 try {
-                                    const sheet = document.styleSheets[i];
-                                    const rules = sheet.cssRules || sheet.rules;
-                                    let css = '';
-                                    for (let j = 0; j < rules.length; j++) {
+                                    var sheet = document.styleSheets[i];
+                                    var rules = sheet.cssRules || sheet.rules;
+                                    var css = '';
+                                    for (var j = 0; j < rules.length; j++) {
                                         css += rules[j].cssText + '\n';
                                     }
                                     allCSS.push(css);
-                                    if (sheet.href) capturedHrefs.add(sheet.href);
+                                    if (sheet.href) capturedHrefs[sheet.href] = true;
                                 } catch (e) {
-                                    // Cross-origin stylesheet - será mantida como <link>
+                                    // Cross-origin stylesheet
                                 }
                             }
                         } catch (e) {}
-                        // Combinar CSS e remover regras do badge Lovable
                         var combinedCSS = allCSS.join('\n');
                         combinedCSS = combinedCSS.replace(/\/\*[^*]*lovable[^*]*\*\//gi, '');
                         result.cssText = combinedCSS;
 
-                        // 2. Coletar imagens como data URLs via canvas
-                        const imgAttrMap = {};
-                        let imgCounter = 0;
+                        // 2. Coletar URLs de imagens (<img src> e <img srcset>)
                         try {
-                            const imgs = document.querySelectorAll('img[src]');
-                            for (const img of imgs) {
-                                const srcAttr = img.getAttribute('src');
-                                if (!srcAttr || srcAttr.startsWith('data:') || imgAttrMap[srcAttr]) continue;
-                                try {
-                                    const c = document.createElement('canvas');
-                                    const w = img.naturalWidth || img.width;
-                                    const h = img.naturalHeight || img.height;
-                                    if (!w || !h || w <= 0 || h <= 0) continue;
-                                    c.width = w;
-                                    c.height = h;
-                                    const ctx = c.getContext('2d');
-                                    ctx.drawImage(img, 0, 0);
-                                    const isPNG = /\.(png|svg|gif|webp)/i.test(srcAttr);
-                                    const ext = isPNG ? 'png' : 'jpg';
-                                    const mime = isPNG ? 'image/png' : 'image/jpeg';
-                                    const dataUrl = c.toDataURL(mime, 0.92);
-                                    imgCounter++;
-                                    const filename = 'img_' + imgCounter + '.' + ext;
-                                    imgAttrMap[srcAttr] = filename;
-                                    result.images.push({ filename: filename, dataUrl: dataUrl });
-                                } catch (e) {
-                                    // Canvas tainted (cross-origin) - mantém src original
+                            document.querySelectorAll('img[src]').forEach(function(img) {
+                                var src = img.getAttribute('src');
+                                if (src && src.startsWith('data:')) {
+                                    if (!seenUrls['data_' + src.substring(0, 80)]) {
+                                        seenUrls['data_' + src.substring(0, 80)] = true;
+                                        result.dataResources.push({ dataUrl: src, type: 'image', originalRef: src });
+                                    }
+                                } else if (src) {
+                                    addResource(src, 'image', src);
                                 }
-                            }
+                            });
+                            document.querySelectorAll('img[srcset]').forEach(function(img) {
+                                var srcset = img.getAttribute('srcset') || '';
+                                srcset.split(',').forEach(function(entry) {
+                                    var url = entry.trim().split(/\s+/)[0];
+                                    if (url && !url.startsWith('data:')) addResource(url, 'image', url);
+                                });
+                            });
                         } catch (e) {}
 
-                        // 3. Coletar imagens que são data URLs inline (já embutidas)
+                        // 3. Coletar URLs de vídeos (<video src>, <video poster>, <source src>)
                         try {
-                            const inlineImgs = document.querySelectorAll('img[src^="data:"]');
-                            for (const img of inlineImgs) {
-                                const srcAttr = img.getAttribute('src');
-                                if (imgAttrMap[srcAttr]) continue;
-                                imgCounter++;
-                                const isPN = srcAttr.startsWith('data:image/png');
-                                const ext = isPN ? 'png' : 'jpg';
-                                const filename = 'img_' + imgCounter + '.' + ext;
-                                imgAttrMap[srcAttr] = filename;
-                                result.images.push({ filename: filename, dataUrl: srcAttr });
-                            }
+                            document.querySelectorAll('video[src]').forEach(function(v) {
+                                var src = v.getAttribute('src');
+                                if (src && !src.startsWith('blob:')) addResource(src, 'video', src);
+                            });
+                            document.querySelectorAll('video[poster]').forEach(function(v) {
+                                var poster = v.getAttribute('poster');
+                                if (poster) addResource(poster, 'image', poster);
+                            });
+                            document.querySelectorAll('source[src]').forEach(function(s) {
+                                var src = s.getAttribute('src');
+                                var type = (s.getAttribute('type') || '').toLowerCase();
+                                if (src && !src.startsWith('blob:')) {
+                                    var resType = type.startsWith('audio') ? 'video' : (type.startsWith('video') ? 'video' : 'video');
+                                    addResource(src, resType, src);
+                                }
+                            });
                         } catch (e) {}
 
-                        // 4. Construir HTML limpo
-                        const clone = document.documentElement.cloneNode(true);
+                        // 4. Coletar URLs de background-image no CSS
+                        try {
+                            var bgMatches = combinedCSS.match(/url\(\s*["']?([^"')]+)["']?\s*\)/gi) || [];
+                            bgMatches.forEach(function(match) {
+                                var inner = match.replace(/url\(\s*["']?/i, '').replace(/["']?\s*\)$/i, '');
+                                if (inner && !inner.startsWith('data:') && !inner.startsWith('blob:')) {
+                                    // Determinar tipo: fonte ou imagem
+                                    var isFont = /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(inner);
+                                    addResource(inner, isFont ? 'font' : 'image', inner);
+                                }
+                            });
+                        } catch (e) {}
 
-                        // Remover badge/branding do Lovable (badge flutuante, links, atribuição)
+                        // 5. Coletar favicons
+                        try {
+                            document.querySelectorAll('link[rel*="icon"]').forEach(function(link) {
+                                var href = link.getAttribute('href');
+                                if (href) addResource(href, 'favicon', href);
+                            });
+                        } catch (e) {}
+
+                        // 6. Construir HTML limpo (com URLs ORIGINAIS — serão substituídas no background)
+                        var clone = document.documentElement.cloneNode(true);
+
+                        // Remover branding Lovable
                         var badgeSelectors = [
                             '[id*="lovable"]', '[class*="lovable"]',
                             '[id*="Lovable"]', '[class*="Lovable"]',
@@ -766,60 +614,42 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                             '[id*="gpt-engineer"]', '[class*="gpt-engineer"]'
                         ];
                         badgeSelectors.forEach(function(sel) {
-                            try {
-                                clone.querySelectorAll(sel).forEach(function(el) {
-                                    el.remove();
-                                });
-                            } catch(e) {}
+                            try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
                         });
-
-                        // Remover meta tags do Lovable
                         clone.querySelectorAll('meta[name="author"][content*="Lovable"]').forEach(function(el) { el.remove(); });
                         clone.querySelectorAll('meta[name="author"][content*="lovable"]').forEach(function(el) { el.remove(); });
                         clone.querySelectorAll('meta[property="og:image"][content*="lovable.dev"]').forEach(function(el) { el.remove(); });
 
-                        // Limpar título se tiver "Lovable"
                         var titleEl = clone.querySelector('title');
                         if (titleEl && /lovable/i.test(titleEl.textContent)) {
                             titleEl.textContent = titleEl.textContent.replace(/\s*[-–|]\s*Lovable.*/i, '').replace(/Lovable\s*[-–|]\s*/i, '') || 'My App';
                         }
 
-                        // Remover stylesheets que foram capturadas
+                        // Remover stylesheets que foram capturadas (manter cross-origin como <link>)
                         clone.querySelectorAll('link[rel="stylesheet"]').forEach(function(el) {
-                            const href = el.getAttribute('href');
-                            // Manter links externos (Google Fonts etc.) que não foram capturados
+                            var href = el.getAttribute('href');
                             if (href) {
-                                let fullHref = href;
-                                try { fullHref = new URL(href, location.href).href; } catch(e) {}
-                                if (capturedHrefs.has(fullHref)) {
-                                    el.remove();
-                                }
-                                // Manter links que não conseguimos capturar (cross-origin)
+                                var fullHref = href;
+                                try { fullHref = new URL(href, baseUrl).href; } catch(e) {}
+                                if (capturedHrefs[fullHref]) el.remove();
                             } else {
                                 el.remove();
                             }
                         });
 
-                        // Remover <style> tags inline (vamos substituir por CSS combinado)
+                        // Remover <style> inline (substituídas pelo CSS combinado)
                         clone.querySelectorAll('style').forEach(function(el) { el.remove(); });
 
-                        // Adicionar CSS combinado
-                        const head = clone.querySelector('head');
-                        if (head && result.cssText) {
-                            const styleEl = document.createElement('style');
-                            styleEl.textContent = result.cssText;
-                            head.appendChild(styleEl);
+                        // Adicionar link para CSS externo (será arquivo local no ZIP)
+                        var head = clone.querySelector('head');
+                        if (head && combinedCSS) {
+                            var linkEl = document.createElement('link');
+                            linkEl.setAttribute('rel', 'stylesheet');
+                            linkEl.setAttribute('href', 'css/styles.css');
+                            head.appendChild(linkEl);
                         }
 
-                        // Substituir src das imagens por caminhos locais
-                        clone.querySelectorAll('img[src]').forEach(function(img) {
-                            const srcAttr = img.getAttribute('src');
-                            if (imgAttrMap[srcAttr]) {
-                                img.setAttribute('src', 'images/' + imgAttrMap[srcAttr]);
-                            }
-                        });
-
-                        // Remover scripts externos (geralmente não funcionam offline)
+                        // Remover scripts externos
                         clone.querySelectorAll('script[src]').forEach(function(el) { el.remove(); });
 
                         result.html = '<!DOCTYPE html>\n' + clone.outerHTML;
@@ -843,36 +673,152 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     return;
                 }
 
-                // Montar arquivos do ZIP
-                const zipFiles = [];
+                // ============================================================
+                // FASE 2: Background — baixar recursos via fetch() (sem CORS)
+                // ============================================================
+                const MAX_RESOURCES = 200;
+                const MAX_SIZE = 50 * 1024 * 1024; // 50MB por recurso
+                const FETCH_TIMEOUT = 15000; // 15s
 
+                // Utilitário: adivinhar extensão pela URL ou Content-Type
+                function guessExt(url, contentType) {
+                    var ct = (contentType || '').toLowerCase();
+                    // Por Content-Type
+                    if (ct.includes('image/png')) return 'png';
+                    if (ct.includes('image/jpeg')) return 'jpg';
+                    if (ct.includes('image/gif')) return 'gif';
+                    if (ct.includes('image/webp')) return 'webp';
+                    if (ct.includes('image/svg')) return 'svg';
+                    if (ct.includes('image/x-icon') || ct.includes('image/vnd.microsoft.icon')) return 'ico';
+                    if (ct.includes('video/mp4')) return 'mp4';
+                    if (ct.includes('video/webm')) return 'webm';
+                    if (ct.includes('video/ogg')) return 'ogv';
+                    if (ct.includes('font/woff2') || ct.includes('application/font-woff2')) return 'woff2';
+                    if (ct.includes('font/woff') || ct.includes('application/font-woff')) return 'woff';
+                    if (ct.includes('font/ttf') || ct.includes('application/font-sfnt') || ct.includes('font/sfnt')) return 'ttf';
+                    if (ct.includes('font/otf')) return 'otf';
+                    if (ct.includes('application/vnd.ms-fontobject')) return 'eot';
+                    // Por extensão na URL
+                    try {
+                        var pathname = new URL(url).pathname;
+                        var match = pathname.match(/\.([a-z0-9]{2,5})(?:\?|$)/i);
+                        if (match) return match[1].toLowerCase();
+                    } catch(e) {}
+                    // Fallback
+                    if (ct.includes('image/')) return 'png';
+                    if (ct.includes('video/')) return 'mp4';
+                    if (ct.includes('font/')) return 'woff2';
+                    return 'bin';
+                }
+
+                // Fetch com timeout
+                async function fetchWithTimeout(url, timeout) {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), timeout);
+                    try {
+                        const res = await fetch(url, { signal: controller.signal });
+                        clearTimeout(timer);
+                        return res;
+                    } catch(e) {
+                        clearTimeout(timer);
+                        throw e;
+                    }
+                }
+
+                // Mapa de URL original → caminho local no ZIP
+                const urlMap = {};
+                const zipFiles = [];
+                const counters = { image: 0, video: 0, font: 0, favicon: 0 };
+
+                // Baixar recursos remotos (fetch no background — sem CORS)
+                const resourcesToFetch = (capturedData.resources || []).slice(0, MAX_RESOURCES);
+                for (const res of resourcesToFetch) {
+                    try {
+                        const response = await fetchWithTimeout(res.url, FETCH_TIMEOUT);
+                        if (!response.ok) continue;
+                        // Verificar tamanho
+                        const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+                        if (contentLength > MAX_SIZE) continue;
+
+                        const buffer = await response.arrayBuffer();
+                        if (buffer.byteLength > MAX_SIZE) continue;
+
+                        const ext = guessExt(res.url, response.headers.get('content-type'));
+                        counters[res.type] = (counters[res.type] || 0) + 1;
+                        const folder = res.type === 'favicon' ? 'images' : res.type + 's';
+                        const filename = res.type + '_' + counters[res.type] + '.' + ext;
+                        const localPath = folder + '/' + filename;
+
+                        zipFiles.push({
+                            name: localPath,
+                            content: new Uint8Array(buffer)
+                        });
+                        urlMap[res.url] = localPath;
+                        // Também mapear a referência original (pode ser relativa)
+                        if (res.originalRef && res.originalRef !== res.url) {
+                            urlMap[res.originalRef] = localPath;
+                        }
+                    } catch (e) {
+                        // Recurso inacessível — mantém URL original
+                    }
+                }
+
+                // Processar data: URLs inline (imagens embutidas no HTML)
+                const dataResources = (capturedData.dataResources || []).slice(0, MAX_RESOURCES);
+                for (const dr of dataResources) {
+                    try {
+                        const resp = await fetch(dr.dataUrl);
+                        const blob = await resp.blob();
+                        const buffer = await blob.arrayBuffer();
+                        counters.image = (counters.image || 0) + 1;
+                        var ext2 = 'png';
+                        if (dr.dataUrl.startsWith('data:image/jpeg')) ext2 = 'jpg';
+                        else if (dr.dataUrl.startsWith('data:image/gif')) ext2 = 'gif';
+                        else if (dr.dataUrl.startsWith('data:image/webp')) ext2 = 'webp';
+                        else if (dr.dataUrl.startsWith('data:image/svg')) ext2 = 'svg';
+                        var localPath2 = 'images/image_' + counters.image + '.' + ext2;
+                        zipFiles.push({
+                            name: localPath2,
+                            content: new Uint8Array(buffer)
+                        });
+                        urlMap[dr.originalRef] = localPath2;
+                    } catch(e) {}
+                }
+
+                // ============================================================
+                // FASE 3: Substituir URLs no HTML e CSS pelos caminhos locais
+                // ============================================================
+                let finalHTML = capturedData.html;
+                let finalCSS = capturedData.cssText || '';
+
+                // Ordenar URLs por comprimento decrescente (evitar substituições parciais)
+                const sortedUrls = Object.keys(urlMap).sort((a, b) => b.length - a.length);
+
+                for (const originalUrl of sortedUrls) {
+                    const localPath = urlMap[originalUrl];
+                    // Escapar para uso em regex
+                    const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    // Substituir no HTML (atributos src, href, poster, srcset)
+                    finalHTML = finalHTML.replace(new RegExp(escaped, 'g'), localPath);
+                    // Substituir no CSS (url(...))
+                    finalCSS = finalCSS.replace(new RegExp(escaped, 'g'), '../' + localPath);
+                }
+
+                // ============================================================
+                // FASE 4: Montar ZIP
+                // ============================================================
                 // index.html
                 zipFiles.push({
                     name: 'index.html',
-                    content: new TextEncoder().encode(capturedData.html)
+                    content: new TextEncoder().encode(finalHTML)
                 });
 
-                // CSS combinado em arquivo separado também
-                if (capturedData.cssText) {
+                // css/styles.css
+                if (finalCSS) {
                     zipFiles.push({
                         name: 'css/styles.css',
-                        content: new TextEncoder().encode(capturedData.cssText)
+                        content: new TextEncoder().encode(finalCSS)
                     });
-                }
-
-                // Imagens
-                for (const img of capturedData.images) {
-                    try {
-                        const res = await fetch(img.dataUrl);
-                        const blob = await res.blob();
-                        const buffer = await blob.arrayBuffer();
-                        zipFiles.push({
-                            name: 'images/' + img.filename,
-                            content: new Uint8Array(buffer)
-                        });
-                    } catch (e) {
-                        // Falha ao processar imagem, pular
-                    }
                 }
 
                 if (zipFiles.length === 0) {
@@ -883,13 +829,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 // Criar ZIP
                 const zipData = await ZipUtils.createZip(zipFiles);
 
-                // Converter para data URL
+                // Converter para base64 data URL (URL.createObjectURL não funciona em Service Worker MV3)
                 let binary = '';
                 for (let i = 0; i < zipData.length; i++) {
                     binary += String.fromCharCode(zipData[i]);
                 }
                 const base64 = btoa(binary);
-                const dataUrl = 'data:application/zip;base64,' + base64;
+                const dataUrl = `data:application/zip;base64,${base64}`;
 
                 // Nome do arquivo
                 const now = new Date();
@@ -897,7 +843,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     (now.getMonth() + 1).toString().padStart(2, '0') +
                     now.getDate().toString().padStart(2, '0') + '-' +
                     now.getHours().toString().padStart(2, '0') +
-                    now.getMinutes().toString().padStart(2, '0');
+                    now.getMinutes().toString().padStart(2, '0') +
+                    now.getSeconds().toString().padStart(2, '0');
                 const slug = projectId ? projectId.slice(0, 8) : 'page';
                 const filename = 'html-page-' + slug + '-' + timestamp + '.zip';
 
@@ -909,10 +856,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     if (chrome.runtime.lastError) {
                         sendResponse({ success: false, error: 'Erro ao iniciar download.' });
                     } else {
-                        const imgCount = capturedData.images.length;
+                        const totalResources = zipFiles.length - 1 - (finalCSS ? 1 : 0); // descontar HTML e CSS
+                        const parts = [];
+                        if (counters.image > 0) parts.push(counters.image + ' imagens');
+                        if (counters.video > 0) parts.push(counters.video + ' vídeos');
+                        if (counters.font > 0) parts.push(counters.font + ' fontes');
+                        if (counters.favicon > 0) parts.push(counters.favicon + ' favicons');
+                        const detail = parts.length > 0 ? ' (' + parts.join(', ') + ')' : '';
                         sendResponse({
                             success: true,
-                            message: 'Download iniciado! ' + zipFiles.length + ' arquivos (HTML + CSS + ' + imgCount + ' imagens).'
+                            message: 'Download iniciado! ' + zipFiles.length + ' arquivos — HTML + CSS + ' + totalResources + ' recursos' + detail
                         });
                     }
                 });
