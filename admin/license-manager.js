@@ -146,6 +146,51 @@ class LicenseManager {
     }
 
     /**
+     * Retorna data de expiração daqui a N horas (para chaves de teste).
+     */
+    getExpiryDateInHours(hours) {
+        const ms = hours * 60 * 60 * 1000;
+        return new Date(Date.now() + ms).toISOString();
+    }
+
+    /**
+     * Gera uma licença de teste com validade em horas (ex.: 1h, 2h).
+     * Mesmo formato MLI-xxx-xxx-xxx; salva na nuvem se saveLicenseToCloud existir.
+     */
+    async generateTestLicense(expiryHours, nameSuffix = null) {
+        const generateSegment = () => {
+            return Math.random().toString(36).substring(2, 10).toUpperCase();
+        };
+        const key = `MLI-${generateSegment()}-${generateSegment()}-${generateSegment()}`;
+        const expiryDate = this.getExpiryDateInHours(expiryHours);
+        const label = nameSuffix != null ? `Teste ${expiryHours}h #${nameSuffix}` : `Teste ${expiryHours}h`;
+        const licenseData = {
+            key,
+            created: new Date().toISOString(),
+            activated: false,
+            activatedDate: null,
+            activatedDevices: [],
+            expiryDate,
+            lifetime: false,
+            active: true,
+            uses: 0,
+            maxUses: null,
+            description: '',
+            userName: label,
+            userPhone: 'Teste'
+        };
+        if (this.ownerId) licenseData.ownerId = this.ownerId;
+
+        this.licenses.push(licenseData);
+        await this.saveLicenses();
+
+        if (typeof saveLicenseToCloud !== 'undefined') {
+            await saveLicenseToCloud(licenseData);
+        }
+        return licenseData;
+    }
+
+    /**
      * Valida uma licenca
      * Funciona em qualquer maquina
      * Multiplos usuarios podem usar a mesma licenca
@@ -409,7 +454,7 @@ class LicenseManager {
                     if (ok) saved++; else skipped++;
                 }
                 await this.loadLicenses();
-                return { success: true, message: 'Importado: ' + saved + ' licenças' + (skipped ? ' (' + skipped + ' já existiam ou erro)' : '') };
+                return { success: true, message: 'Importado: ' + saved + ' licenças novas.' + (skipped ? ' ' + skipped + ' chaves já existentes foram ignoradas (mantidas como no painel).' : '') };
             }
 
             this.licenses = imported;

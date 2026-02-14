@@ -3,7 +3,7 @@
  * Ofusca os JS, copia arquivos e ajusta referências nos HTML.
  * Ao final, compacta em LOVABLE_INFINITY_vX.X.X.zip, copia para admin/downloads e faz deploy na Vercel.
  *
- * Escopo: apenas extension-prod/ passa pelo build. extension-dev/ nunca é construída.
+ * Escopo: pasta extension/ é a fonte do build (ofuscação, ZIP, admin/downloads).
  *
  * VERSIONAMENTO SEMÂNTICO (SemVer) - AUTOMÁTICO:
  * - Por padrão: incrementa PATCH automaticamente
@@ -19,7 +19,7 @@ const path = require('path');
 const archiver = require('archiver');
 
 const ROOT = path.resolve(__dirname, '..');
-const EXT = path.join(ROOT, 'extension-prod');
+const EXT = path.join(ROOT, 'extension');
 const BUILD = path.join(EXT, 'build');
 let ZIP_NAME = 'LOVABLE_INFINITY.zip';
 let ZIP_PATH = path.join(ROOT, ZIP_NAME);
@@ -51,8 +51,8 @@ const OBFUSCATOR_OPTIONS = {
   unicodeEscapeSequence: true,
 };
 
-// Arquivos a ofuscar: [origem, destino no build]
-// Nomes neutros: c1=config, c2=auth, c3=popup, c4=background, c5=content, c6=zip-utils
+// Única fonte de verdade: nomes de dev (extension/) -> nomes no build (c1..c6).
+// Em extension/ use SEMPRE nomes de dev; o build substitui por c1..c6 só na pasta build.
 const OBFUSCATE_LIST = [
   ['config.js', 'c1.js'],
   ['auth.js', 'c2.js'],
@@ -61,6 +61,7 @@ const OBFUSCATE_LIST = [
   ['content.js', 'c5.js'],
   ['zip-utils.js', 'c6.js'],
 ];
+const DEV_TO_BUILD = Object.fromEntries(OBFUSCATE_LIST);
 
 const COPY_FILES = ['auth.html', 'popup.html', 'styles.css', 'manifest.json', 'voice-permission.js'];
 
@@ -105,7 +106,17 @@ function replaceInFile(filePath, replacements) {
   fs.writeFileSync(filePath, content, 'utf8');
 }
 
+/** Aplica o mapeamento dev -> build em qualquer texto (JS, HTML, etc.). Usar em todo conteúdo que vai para a build. */
+function applyBuildNames(text) {
+  let out = text;
+  OBFUSCATE_LIST.forEach(([orig, dest]) => {
+    out = out.split(orig).join(dest);
+  });
+  return out;
+}
+
 function getVersionType() {
+  if (process.env.VERCEL) return 'skip';
   const args = process.argv.slice(2);
   const arg = (args[0] || '').toLowerCase().trim();
   if (arg === 'major') return 'major';
@@ -277,16 +288,6 @@ function addPostObfuscationNotice(obfuscatedCode) {
   return notice + obfuscatedCode;
 }
 
-/**
- * Pre-processa background.js para substituir referências a arquivos pelo nome ofuscado no build
- */
-function preprocessBackgroundForBuild(code) {
-  return code
-    .replace(/importScripts\s*\(\s*['"]c3\.js['"]\s*\)/g, "importScripts('c6.js')")
-    .replace(/importScripts\s*\(\s*['"]zip-utils\.js['"]\s*\)/g, "importScripts('c6.js')")
-    .replace(/importScripts\s*\(\s*['"]config\.js['"]\s*\)/g, "importScripts('c1.js')");
-}
-
 async function main() {
   log('============================================');
   log(' BUILD DA EXTENSAO CHROME - Lovable Infinity');
@@ -318,7 +319,7 @@ async function main() {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     manifest.version = newVersion;
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 4), 'utf8');
-    log('[*] Versao propagada para extension-prod/manifest.json: ' + newVersion + '\n');
+    log('[*] Versao propagada para extension/manifest.json: ' + newVersion + '\n');
   }
 
   ZIP_NAME = `LOVABLE_INFINITY_v${newVersion}.zip`;
@@ -354,9 +355,7 @@ async function main() {
     log(`[${i + 1}/${OBFUSCATE_LIST.length}] Ofuscando ${srcName} -> ${destName}...`);
     try {
       let code = fs.readFileSync(srcPath, 'utf8');
-      if (srcName === 'background.js') {
-        code = preprocessBackgroundForBuild(code);
-      }
+      code = applyBuildNames(code);
       code = injectAntiAITraps(code, srcName);
       const result = JavaScriptObfuscator.obfuscate(code, OBFUSCATOR_OPTIONS);
       const finalCode = addPostObfuscationNotice(result.getObfuscatedCode());
@@ -378,21 +377,36 @@ async function main() {
     copyFileSync(src, dest);
   });
 
-  // Ajustar referências nos HTML: config.js -> c1.js, auth.js -> c2.js, popup.js -> c3.js
-  const htmlReplacements = [
-    ['config.js', 'c1.js'],
-    ['auth.js', 'c2.js'],
-    ['popup.js', 'c3.js'],
-  ];
-  replaceInFile(path.join(BUILD, 'popup.html'), htmlReplacements);
-  replaceInFile(path.join(BUILD, 'auth.html'), htmlReplacements);
+  // Mesmo mapeamento nos HTML (referências a scripts viram c1, c2, c3)
+  replaceInFile(path.join(BUILD, 'popup.html'), OBFUSCATE_LIST);
+  replaceInFile(path.join(BUILD, 'auth.html'), OBFUSCATE_LIST);
 
-  // Ajustar manifest: background.service_worker -> c4.js, content_scripts[0].js -> c5.js
+  // Manifest: service_worker e content_scripts usam nomes da build (c4, c5)
   const manifestBuildPath = path.join(BUILD, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestBuildPath, 'utf8'));
-  manifest.background.service_worker = 'c4.js';
-  manifest.content_scripts[0].js = ['c5.js'];
+  manifest.background.service_worker = DEV_TO_BUILD['background.js'];
+  manifest.content_scripts[0].js = [DEV_TO_BUILD['content.js']];
   fs.writeFileSync(manifestBuildPath, JSON.stringify(manifest, null, 4), 'utf8');
+
+  // Garantir que a build não tenha referências aos nomes de dev (só c1..c6)
+  const devNames = OBFUSCATE_LIST.map(([orig]) => orig);
+  for (const htmlName of ['popup.html', 'auth.html']) {
+    const htmlPath = path.join(BUILD, htmlName);
+    const content = fs.readFileSync(htmlPath, 'utf8');
+    for (const dev of devNames) {
+      if (content.includes(dev)) {
+        log('[ERRO] Build contem referencia a nome de dev: ' + dev + ' em ' + htmlName);
+        process.exit(1);
+      }
+    }
+  }
+  const manifestContent = fs.readFileSync(manifestBuildPath, 'utf8');
+  for (const dev of ['background.js', 'content.js']) {
+    if (manifestContent.includes(dev)) {
+      log('[ERRO] Build manifest contem referencia a nome de dev: ' + dev);
+      process.exit(1);
+    }
+  }
 
   log('[*] Copiando icones e logo...');
   copyDirSync(path.join(EXT, 'ICONS'), path.join(BUILD, 'ICONS'));
@@ -435,6 +449,11 @@ async function main() {
   fs.writeFileSync(versionPath, JSON.stringify(versionPayload, null, 0), 'utf8');
   log('[*] admin/version.json gerado (versao ' + newVersion + ', arquivo: ' + ZIP_NAME + ').');
 
+  if (process.env.VERCEL) {
+    log('\n[*] Build na Vercel: admin/downloads/ e version.json gerados. Deploy sera feito pela Vercel.');
+    log('\n============================================\n CONCLUIDO (Vercel)\n============================================\n');
+    return;
+  }
   log('\n[*] Executando deploy na Vercel (painel admin + API)...');
   try {
     const { execSync } = require('child_process');
@@ -448,7 +467,7 @@ async function main() {
   log(' CONCLUIDO COM SUCESSO');
   log('============================================\n');
   log(`[+] Versao: ${newVersion}`);
-  log(`[+] Build criado em: extension-prod/build/`);
+  log(`[+] Build criado em: extension/build/`);
   log('[+] ZIP gerado na raiz: ' + ZIP_NAME);
   log('[+] ZIP copiado em: admin/downloads/' + ZIP_NAME);
   log('[+] Ao descompactar o ZIP, o usuario tera a pasta "' + ZIP_FOLDER_NAME + '" pronta para carregar no Chrome.\n');

@@ -77,7 +77,7 @@ Não há tabelas "clientes" ou "sócios" no repositório; apenas licenses e Auth
 | **_shared/supabase.ts** | getSupabaseClient(), getLicense(key), updateLicense(key, updates). Tabela licenses. |
 | **validate-license** | POST body: licenseKey, deviceFingerprint. getLicense, valida active/lifetime/expiry/max_uses/sessão outro dispositivo. createSession, updateLicense (activated, activated_date, etc.). Retorna sessionToken, refreshToken, expiresAt. |
 | **send-prompt** | requireSession. Body: message, projectId, token (Lovable), files. N8N_WEBHOOK_URL. Envio JSON ou FormData para N8N. |
-| **send-message** | (Doc: arquivos, webhook; usado por extensão DEV ou fluxo com arquivos.) |
+| **send-message** | Fluxo com arquivos (webhook); ver docs/ENVIO_ARQUIVOS. |
 | **enhance-prompt** | Melhorador de prompt + transcrição. |
 | **verify-session** | Valida JWT de sessão, atualiza last_ping. |
 | **refresh-session** | Refresh token → novo sessionToken. |

@@ -14,8 +14,9 @@ const CONFIG = {
     SUPABASE_URL: 'https://svjglgrxqxqtonoobcdi.supabase.co',
     SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2amdsZ3J4cXhxdG9ub29iY2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyNjUyMDMsImV4cCI6MjA4NTg0MTIwM30.6adWdnXXlrD_-6nrzdcviyKfVuBjWo57piuedOFdG0o',
 
-    // Envio de mensagens (proxy para Lovable API)
-    SEND_MESSAGE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-message',
+    // Envio de mensagens (proxy N8N → Lovable)
+    SEND_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
+    SEND_MESSAGE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
     // Melhorador de prompt + Transcrição de áudio (exige JWT)
     IMPROVE_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
     TRANSCRIBE_AUDIO_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
@@ -152,16 +153,27 @@ async function validateKeySecure(key) {
 }
 
 async function verifyIntegrity() {
+    // Tenta ambos os nomes: dev = config.js, build = c1.js (evita ERR_FILE_NOT_FOUND)
+    const scriptNames = ['config.js', 'c1.js'];
     try {
-        const response = await fetch(chrome.runtime.getURL('config.js'));
-        const code = await response.text();
+        let code = null;
+        for (const name of scriptNames) {
+            try {
+                const response = await fetch(chrome.runtime.getURL(name));
+                if (response && response.ok) {
+                    code = await response.text();
+                    break;
+                }
+            } catch (_) {
+                continue;
+            }
+        }
+        if (!code) return true; // não bloquear se não conseguir carregar
         const hash = await hashString(code);
-        
         const stored = await chrome.storage.local.get('codeHash');
         if (stored.codeHash && stored.codeHash !== hash) {
             return false;
         }
-        
         await chrome.storage.local.set({ codeHash: hash });
         return true;
     } catch (error) {

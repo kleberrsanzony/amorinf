@@ -126,7 +126,7 @@ function getAuth() {
     };
 }
 
-/** Compatível com interface tipo Firebase (getIdToken); retorna o JWT do Supabase. */
+/** Retorna objeto usuário com uid, email, displayName e getIdToken() (JWT). */
 function _wrapUser(user, accessToken) {
     return {
         uid: user.id,
@@ -245,7 +245,8 @@ async function saveLicenseToCloud(license) {
                 uses: license.uses || 0, ownerId: license.ownerId || null
             })
         });
-        return r.ok || (r.status === 409);
+        // Só retorna true quando a licença foi criada (201). 409 = chave já existe → ignorada na importação.
+        return r.status === 201;
     } catch (error) { return false; }
 }
 
