@@ -9,26 +9,22 @@ const CONFIG = {
     CACHE_DURATION: 5 * 60 * 1000,
 
     // ============================================
-    // VERCEL API ROUTES (todos os endpoints)
+    // SUPABASE (nossa branch — extensão fala só com Supabase)
     // ============================================
+    SUPABASE_URL: 'https://svjglgrxqxqtonoobcdi.supabase.co',
+    SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2amdsZ3J4cXhxdG9ub29iY2RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyNjUyMDMsImV4cCI6MjA4NTg0MTIwM30.6adWdnXXlrD_-6nrzdcviyKfVuBjWo57piuedOFdG0o',
+
+    // Painel/API (origem do painel; extensão não chama esses endpoints)
     API_BASE: 'https://lovable-infinity-panel.vercel.app',
 
-<<<<<<<< HEAD:Futura Extensao/config.js
-    // Envio de mensagens (proxy para Lovable API)
-    SEND_MESSAGE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/sendMessage',
-========
-    // Envio de mensagens (proxy N8N → Lovable)
+    // Edge Functions Supabase (envio, licença, sessão, melhorador)
     SEND_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
     SEND_MESSAGE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/send-prompt',
->>>>>>>> feature/build-refactor-extension:extension/config.js
-    // Melhorador de prompt + Transcrição de áudio (exige JWT)
-    IMPROVE_PROMPT_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
-    TRANSCRIBE_AUDIO_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/enhancePrompt',
-    // Licenciamento (Firebase RTDB)
-    VALIDATE_LICENSE_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/validateLicense',
-    // Sessão JWT
-    VERIFY_SESSION_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/verifySession',
-    REFRESH_SESSION_ENDPOINT: 'https://lovable-infinity-panel.vercel.app/api/refreshSession'
+    VALIDATE_LICENSE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/validate-license',
+    VERIFY_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/verify-session',
+    REFRESH_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/refresh-session',
+    IMPROVE_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
+    TRANSCRIBE_AUDIO_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt'
 };
 
 let licenseCache = {};
@@ -90,6 +86,36 @@ async function hashString(str) {
 }
 
 /**
+ * DeviceId no formato PromptX 3.1 (HWID_CPU_GPU) para usar em PROMPTX_DEVICE_ID.
+ * Use esta máquina para ativar a licença PromptX e depois copie o valor para .env.
+ */
+async function getPromptxStyleDeviceId() {
+    let cpu = 'Generic CPU';
+    let gpu = 'GPU-Generic';
+    try {
+        if (typeof chrome !== 'undefined' && chrome.system && chrome.system.cpu && chrome.system.cpu.getInfo) {
+            const info = await Promise.race([
+                chrome.system.cpu.getInfo(),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 750))
+            ]);
+            if (info && info.modelName) cpu = String(info.modelName).trim();
+        }
+    } catch (_) {}
+    try {
+        const canvas = typeof document !== 'undefined' && document.createElement('canvas');
+        if (canvas) {
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (gl) {
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) gpu = (gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || gpu).trim();
+            }
+        }
+    } catch (_) {}
+    const raw = 'HWID_' + cpu + '_' + gpu;
+    return raw.replace(/\s+/g, '').toUpperCase();
+}
+
+/**
  * Obter ou gerar ID do dispositivo
  */
 async function getDeviceFingerprint() {
@@ -105,17 +131,25 @@ async function getDeviceFingerprint() {
 }
 
 /**
- * Retorna headers base para chamadas à API Vercel
+ * Headers para Edge Functions Supabase (apikey obrigatório)
  */
-function getApiHeaders(extraHeaders = {}) {
-    return { 'Content-Type': 'application/json', ...extraHeaders };
+function getSupabaseHeaders(extraHeaders = {}) {
+    const h = {
+        'Content-Type': 'application/json',
+        'apikey': (typeof CONFIG !== 'undefined' && CONFIG.SUPABASE_ANON_KEY) ? CONFIG.SUPABASE_ANON_KEY : '',
+        ...extraHeaders
+    };
+    if (!h['Authorization'] && h.apikey) h['Authorization'] = 'Bearer ' + h.apikey;
+    return h;
 }
 
-// Alias de compatibilidade
-var getSupabaseHeaders = getApiHeaders;
+/** @deprecated use getSupabaseHeaders para chamadas à extensão (Supabase) */
+function getApiHeaders(extraHeaders = {}) {
+    return getSupabaseHeaders(extraHeaders);
+}
 
 /**
- * Valida a chave de licença usando Vercel API
+ * Valida a chave de licença via Supabase Edge Function validate-license
  */
 async function validateKeySecure(key) {
     if (!CONFIG.REQUIRE_LICENSE) {

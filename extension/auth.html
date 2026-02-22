@@ -94,6 +94,14 @@
         <div class="auth-footer" id="auth-footer">
             Lovable Infinity • Version <span id="version-number">...</span>
         </div>
+
+        <div class="proxy-funil-device" id="proxy-funil-device" style="margin-top: 12px; padding: 10px; background: var(--bg-secondary, #1a1a1a); border-radius: 8px; font-size: 11px;">
+            <div style="margin-bottom: 6px; opacity: 0.9;">Proxy Funil: DeviceId desta máquina (copie para .env → PROMPTX_DEVICE_ID)</div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="promptx-device-id" readonly style="flex:1; padding: 6px 8px; font-family: monospace; font-size: 11px; background: #0d0d0d; border: 1px solid #333; border-radius: 4px; color: #ccc;">
+                <button type="button" id="copy-device-id" style="padding: 6px 12px; background: #333; border: none; border-radius: 4px; color: #fff; cursor: pointer; white-space: nowrap;">Copiar</button>
+            </div>
+        </div>
     </div>
 
     <!-- Scripts -->

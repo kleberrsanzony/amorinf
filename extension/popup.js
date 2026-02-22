@@ -7,7 +7,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ============================================
     const authData = await chrome.storage.local.get(['isAuthenticated', 'licenseKey', 'sessionToken']);
 
-    if (CONFIG.REQUIRE_LICENSE && (!authData.isAuthenticated || !authData.licenseKey || !authData.sessionToken)) {
+    // Permite entrada com licenseKey + isAuthenticated mesmo sem sessionToken (fallback quando validate-license não retorna JWT)
+    if (CONFIG.REQUIRE_LICENSE && (!authData.isAuthenticated || !authData.licenseKey)) {
         window.location.href = 'auth.html';
         return;
     }
@@ -26,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const filePreviewContainer = document.getElementById('file-preview-container');
     const screenshotBtn = document.getElementById('screenshot-btn');
     const downloadProjectBtn = document.getElementById('download-project-btn');
-    const downloadHtmlBtn = document.getElementById('download-html-btn');
+    const removeWatermarkBtn = document.getElementById('remove-watermark-btn');
     const voiceBtn = document.getElementById('voice-btn');
     // Mode toggle removido - modo fixo em 'error'
 
@@ -67,8 +68,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             const result = await validateKeySecure(authData.licenseKey);
 
             if (!result.valid) {
-                await chrome.storage.local.remove(['isAuthenticated', 'licenseKey', 'authTimestamp', 'userData', 'lovable_token', 'deviceFingerprint']);
-                window.location.href = 'auth.html';
+                const msg = (result.message || '').toLowerCase();
+                const licenseInvalid = /inválid|expirad|desativad|não encontrad|bloquead/.test(msg);
+                if (licenseInvalid) {
+                    await chrome.storage.local.remove(['isAuthenticated', 'licenseKey', 'authTimestamp', 'userData', 'lovable_token', 'deviceFingerprint']);
+                    window.location.href = 'auth.html';
+                    return;
+                }
+                // Erro de rede ou servidor: não deslogar, seguir com o que está no storage
+                if (loadingOverlay) loadingOverlay.style.display = 'none';
+                await updateLicenseDaysDisplay();
             } else {
                 // Atualizar userData com expiryDate e lifetime
                 if (result.license) {
@@ -139,26 +148,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Executar validação UMA ÚNICA VEZ ao iniciar
     await validateLicenseOnce();
 
-    // ============================================
-    // VERIFICAÇÃO JWT OBRIGATÓRIA
-    // O token é assinado pelo servidor - não pode ser forjado.
-    // Sem JWT válido = sem acesso, mesmo que moque outras respostas.
-    // ============================================
-    const sessionResult = await verifySessionWithServer();
-    if (!sessionResult.valid) {
-        // Tentar renovar o token
-        const refreshed = await tryRefreshSession();
-        if (!refreshed) {
-            // JWT inválido/expirado - forçar novo login
-            await chrome.storage.local.remove([
-                'isAuthenticated', 'licenseKey', 'authTimestamp', 'userData',
-                'lovable_token', 'deviceFingerprint',
-                'sessionToken', 'refreshToken', 'sessionExpiresAt'
-            ]);
-            window.location.href = 'auth.html';
-            return;
-        }
-    }
+    // Fluxo baseado em licenseKey + validate-license; verify-session/refresh-session não implementados (evita 404).
 
     // Helper: Update UI when token is found
     function updateTokenDisplay(token) {
@@ -617,15 +607,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Envia mensagem + arquivos para o background
-            // O background envia via N8N (Supabase Edge Function send-prompt)
+            // licenseKey + deviceFingerprint (desta máquina) para o backend / PromptX
+            const keyStore = await chrome.storage.local.get(['licenseKey', 'deviceFingerprint']);
+            let deviceFingerprint = keyStore.deviceFingerprint;
+            if (!deviceFingerprint && typeof getDeviceFingerprint === 'function') {
+                deviceFingerprint = await getDeviceFingerprint();
+            }
             chrome.runtime.sendMessage({
                 action: "sendLovableChat",
                 projectId: config.projectId,
                 token: config.token,
                 message: text,
                 mode: sendMode,
-                files: fileAttachments.length > 0 ? fileAttachments : undefined
+                files: fileAttachments.length > 0 ? fileAttachments : undefined,
+                licenseKey: keyStore.licenseKey || undefined,
+                deviceFingerprint: deviceFingerprint || undefined
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     addSystemMessage("Erro: " + chrome.runtime.lastError.message);
@@ -767,48 +763,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         } finally {
             downloadProjectBtn.disabled = false;
             downloadProjectBtn.classList.remove('loading');
-            hideDownloadOverlay();
-        }
-    }
-
-    // Download da página como HTML (captura o preview renderizado)
-    async function downloadAsHTML() {
-        await captureData();
-        if (!config.projectId) {
-            addSystemMessage('Abra um projeto no Lovable para capturar a página.');
-            return;
-        }
-
-        if (!downloadHtmlBtn) return;
-        downloadHtmlBtn.disabled = true;
-        downloadHtmlBtn.classList.add('loading');
-        showDownloadOverlay('Capturando página... aguarde.');
-
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab) {
-                addSystemMessage('Não foi possível identificar a aba ativa.');
-                return;
-            }
-
-            const response = await new Promise((resolve) => {
-                chrome.runtime.sendMessage({
-                    action: "downloadAsHTML",
-                    tabId: tab.id,
-                    projectId: config.projectId
-                }, resolve);
-            });
-
-            if (response && response.success) {
-                addSystemMessage(response.message || 'Download da página HTML iniciado!');
-            } else {
-                addSystemMessage(response?.error || 'Erro ao capturar página.');
-            }
-        } catch (e) {
-            addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
-        } finally {
-            downloadHtmlBtn.disabled = false;
-            downloadHtmlBtn.classList.remove('loading');
             hideDownloadOverlay();
         }
     }
@@ -1121,14 +1075,58 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (downloadProjectBtn) {
         downloadProjectBtn.addEventListener('click', downloadProject);
     }
-    if (downloadHtmlBtn) {
-        downloadHtmlBtn.addEventListener('click', downloadAsHTML);
+
+    // Botão: remover marca d'água — atualiza o código no Lovable (adiciona #lovable-badge no CSS)
+    if (removeWatermarkBtn) {
+        removeWatermarkBtn.addEventListener('click', async () => {
+            await captureData();
+            if (!config.projectId) {
+                addSystemMessage('Abra um projeto no Lovable para remover a marca d\'água.');
+                return;
+            }
+            if (!config.token) {
+                addSystemMessage('Token do Lovable não encontrado. Recarregue a página do projeto.');
+                return;
+            }
+            removeWatermarkBtn.disabled = true;
+            removeWatermarkBtn.classList.add('loading');
+            showDownloadOverlay('Removendo marca d\'água...');
+            try {
+                const response = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                        action: 'removeWatermarkInLovable',
+                        projectId: config.projectId,
+                        token: config.token
+                    }, resolve);
+                });
+                if (response && response.success) {
+                    addSystemMessage(response.message || 'Marca d\'água removida. Publique pelo Lovable para ver o resultado.');
+                } else {
+                    addSystemMessage(response?.error || 'Erro ao remover marca d\'água.');
+                }
+            } catch (e) {
+                addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
+            } finally {
+                removeWatermarkBtn.disabled = false;
+                removeWatermarkBtn.classList.remove('loading');
+                hideDownloadOverlay();
+            }
+        });
     }
 
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
+            e.stopPropagation();
             sendMessage();
+            return false;
+        }
+    });
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
         }
     });
 

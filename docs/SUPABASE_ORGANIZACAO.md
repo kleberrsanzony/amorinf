@@ -39,6 +39,10 @@ Configurar em: Supabase Dashboard → Project Settings → Edge Functions → Se
 | Secret | Obrigatório para | Descrição |
 |--------|-------------------|-----------|
 | **JWT_SECRET** | validate-license, verify-session, refresh-session, send-prompt | Chave para assinar/validar JWT de sessão da extensão. Deve ser um valor seguro e único. |
+| **PROMPTX_LICENSE_KEY** | send-prompt | Única licença PromptX 3.1 usada no funil (ex.: TDH8-3XO7-P9MC-PY3Y). Não geramos licenças no Supabase do PromptX; apenas consumimos o serviço com essa licença. |
+| **PROMPTX_DEVICE_ID** | send-prompt | DeviceId/hardware ID **da máquina em que a licença PromptX foi ativada** (ex.: HWID_INTEL...). Deve ser o valor real obtido desse ambiente; não gerar aleatório. Usado em validate e proxy_webhook. |
+| **PROMPTX_GATEWAY_URL** | send-prompt | URL do secure-gateway do PromptX. |
+| **PROMPTX_ANON_KEY** | send-prompt | Anon key do projeto Supabase do PromptX. |
 | **N8N_WEBHOOK_URL** | send-prompt, send-message | URL do webhook N8N que recebe mensagens/arquivos. |
 
 Outros (se usados pelo código): OPENROUTER_API_KEY (enhance-prompt), HMAC_SIGNING_SECRET ou WEBHOOK_URL (send-message), etc.
@@ -59,6 +63,13 @@ npx supabase functions deploy send-prompt --no-verify-jwt --project-ref svjglgrx
 ```
 
 `--no-verify-jwt` é usado porque a extensão envia `apikey` (anon) e a validação é feita por body/header próprio (licenseKey + deviceFingerprint ou JWT de sessão).
+
+### Checklist Proxy Funil (send-prompt + validate-license)
+
+- **Secrets (via CLI):** Configurar com `supabase secrets set` (não usar apenas o Dashboard). Ex.: `supabase secrets set JWT_SECRET=xxx PROMPTX_LICENSE_KEY=TDH8-3XO7-P9MC-PY3Y PROMPTX_DEVICE_ID=xxx PROMPTX_GATEWAY_URL=xxx PROMPTX_ANON_KEY=xxx --project-ref svjglgrxqxqtonoobcdi`.
+- **Deploy (via CLI):** `npx supabase functions deploy validate-license send-prompt --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi`.
+- **Banco:** Tabelas `licenses`, `session_cache` e `usage_logs` existem; RLS habilitado (service_role acessa). Ver `supabase/setup-proxy-funil.sql`.
+- **Extensão:** Após login, o storage tem `licenseKey`; o popup permite entrada com licenseKey mesmo sem sessionToken; ao enviar mensagem, o body inclui `licenseKey`.
 
 ## Comunicação com o painel
 

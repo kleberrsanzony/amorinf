@@ -139,4 +139,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Auto-focus no input
     keyInput.focus();
+
+    // DeviceId no formato PromptX (para .env PROMPTX_DEVICE_ID)
+    const deviceIdInput = document.getElementById('promptx-device-id');
+    const copyDeviceIdBtn = document.getElementById('copy-device-id');
+    if (deviceIdInput && typeof getPromptxStyleDeviceId === 'function') {
+        getPromptxStyleDeviceId().then(function (id) {
+            deviceIdInput.value = id || '';
+        }).catch(function () {
+            deviceIdInput.value = '';
+        });
+    }
+    if (copyDeviceIdBtn && deviceIdInput) {
+        copyDeviceIdBtn.addEventListener('click', function () {
+            deviceIdInput.select();
+            document.execCommand('copy');
+            copyDeviceIdBtn.textContent = 'Copiado!';
+            setTimeout(function () {
+                copyDeviceIdBtn.textContent = 'Copiar';
+            }, 1500);
+        });
+    }
 });

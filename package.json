@@ -1,10 +1,11 @@
 {
     "name": "lovable-infinity",
-    "version": "4.0.4",
+    "version": "4.0.12",
     "description": "Extensão Chrome Lovable Infinity - Build e deploy",
     "scripts": {
         "build": "node scripts/build.js",
-        "reset-master": "node scripts/reset-and-create-master.js"
+        "reset-master": "node scripts/reset-and-create-master.js",
+        "set-secrets": "node scripts/set-proxy-secrets.js"
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.45.0",
