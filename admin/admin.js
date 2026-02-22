@@ -257,6 +257,7 @@ function setupEventListeners() {
 
     // Usuários do painel
     document.getElementById('btn-refresh-panel-users')?.addEventListener('click', loadPanelUsers);
+    document.getElementById('btn-cleanup-orphaned-licenses')?.addEventListener('click', cleanupOrphanedLicenses);
     document.getElementById('modal-edit-panel-user-close')?.addEventListener('click', closeEditPanelUserModal);
     document.getElementById('btn-edit-panel-user-cancel')?.addEventListener('click', closeEditPanelUserModal);
     document.getElementById('btn-edit-panel-user-submit')?.addEventListener('click', submitEditPanelUser);
@@ -1122,6 +1123,40 @@ async function submitEditPanelUser() {
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
 }
 
+async function cleanupOrphanedLicenses() {
+    var apiUrl = typeof CLEANUP_ORPHANED_LICENSES_API_URL !== 'undefined' ? CLEANUP_ORPHANED_LICENSES_API_URL : '';
+    if (!apiUrl || !currentUser) {
+        showAlertAdmin('Faça login para usar esta ação.', 'error');
+        return;
+    }
+    var btn = document.getElementById('btn-cleanup-orphaned-licenses');
+    if (btn) { btn.disabled = true; btn.textContent = 'Limpando...'; }
+    try {
+        var token = await currentUser.getIdToken();
+        var res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.success) {
+            var msg = data.deletedCount === 0
+                ? 'Nenhuma licença órfã encontrada.'
+                : 'Removidas ' + data.deletedCount + ' licença(s) de ex-sócios.';
+            showAlertAdmin(msg, 'success');
+            if (data.deletedCount > 0 && typeof licenseManager !== 'undefined' && licenseManager.loadLicenses) {
+                await licenseManager.loadLicenses();
+                allLicensesCache = licenseManager.licenses;
+                renderTable(sortLicenses(allLicensesCache));
+            }
+        } else {
+            showAlertAdmin(data.error || 'Erro ao limpar licenças.', 'error');
+        }
+    } catch (e) {
+        showAlertAdmin('Erro de conexão.', 'error');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Limpar licenças de ex-sócios'; }
+}
+
 function deletePanelUserConfirm(uid, email) {
     currentAction = async function () {
         var apiUrl = typeof DELETE_PANEL_USER_API_URL !== 'undefined' ? DELETE_PANEL_USER_API_URL : '';
@@ -1150,7 +1185,7 @@ function deletePanelUserConfirm(uid, email) {
         }
         closeModal();
     };
-    showModal('Apagar usuário', 'Tem certeza que deseja apagar o usuário "' + (email || uid) + '"? Esta ação não pode ser desfeita.');
+    showModal('Apagar sócio', 'Tem certeza que deseja apagar o usuário "' + (email || uid) + '"? Todas as licenças vinculadas a esse sócio serão removidas e o acesso ao painel será revogado. Esta ação não pode ser desfeita.');
 }
 
 function showAlertAdmin(message, type) {

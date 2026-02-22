@@ -92,6 +92,81 @@
   setTimeout(requestApply, 2500);
 })();
 
+// ============================================
+// SCROLL AUTOMÁTICO NO CHAT DO LOVABLE
+// Força scroll para o fim quando o chat do Lovable recebe novo conteúdo.
+// ============================================
+(function setupLovableChatAutoScroll() {
+  if (window.__lovableChatScrollActive) return;
+  window.__lovableChatScrollActive = true;
+
+  function getScrollableParent(el) {
+    let node = el && el.parentElement;
+    while (node) {
+      const style = getComputedStyle(node);
+      const overflowY = style.overflowY || style.overflow;
+      const isScrollable = (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
+        node.scrollHeight > node.clientHeight;
+      if (isScrollable) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function scrollChatToBottom(targetEl) {
+    const container = targetEl && getScrollableParent(targetEl);
+    if (container) {
+      try {
+        container.scrollTop = container.scrollHeight;
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  let scrollScheduled = false;
+  function scheduleScrollToBottom(addedNode) {
+    if (scrollScheduled) return;
+    scrollScheduled = true;
+    requestAnimationFrame(() => {
+      scrollScheduled = false;
+      scrollChatToBottom(addedNode);
+    });
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        // Novo nó no DOM: tenta rolar o container scrollável que o contém
+        scheduleScrollToBottom(node);
+        // Também verifica se o nó em si é um container de chat (ex.: painel de mensagens)
+        if (node.querySelector && node.querySelector('[id^="aimsg_"]')) {
+          scheduleScrollToBottom(node);
+        }
+      }
+    }
+  });
+
+  function startChatScrollObserving() {
+    if (!document.body) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startChatScrollObserving);
+      } else {
+        setTimeout(startChatScrollObserving, 300);
+      }
+      return;
+    }
+    observer.observe(document.body, { childList: true, subtree: true });
+    // Scroll inicial: após um tempo, tenta rolar qualquer container que pareça chat (com aimsg_)
+    setTimeout(() => {
+      const withAimsg = document.querySelector('[id^="aimsg_"]');
+      if (withAimsg) scrollChatToBottom(withAimsg);
+    }, 1500);
+    console.log('[Lovable Infinity] Auto-scroll do chat do Lovable ativado.');
+  }
+
+  startChatScrollObserving();
+})();
+
 // Listener para mensagens do background/popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
@@ -175,8 +250,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const blob = new Blob(window.__voiceChunks, { type: recorder.mimeType || 'audio/webm' });
             const reader = new FileReader();
             reader.onloadend = () => {
-              const base64 = reader.result.split(',')[1] || '';
+              const base64 = (reader.result && typeof reader.result === 'string')
+                ? reader.result.split(',')[1] || ''
+                : '';
               const format = (recorder.mimeType || 'audio/webm').includes('webm') ? 'webm' : 'mp3';
+              if (!base64 || base64.length < 100) {
+                chrome.runtime.sendMessage({
+                  action: 'voiceRecordingResult',
+                  success: false,
+                  error: 'Áudio gravado está vazio ou muito curto.'
+                });
+                return;
+              }
               chrome.runtime.sendMessage({
                 action: 'voiceRecordingResult',
                 success: true,

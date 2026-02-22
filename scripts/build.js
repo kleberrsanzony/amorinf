@@ -1,17 +1,25 @@
 /**
  * Build automatizado da extensão Chrome - Lovable Infinity
  * Ofusca os JS, copia arquivos e ajusta referências nos HTML.
- * Ao final, compacta em LOVABLE_INFINITY_vX.X.X.zip, copia para admin/downloads e faz deploy na Vercel.
+ * Ao final: gera LOVABLE_INFINITY_vX.X.X.zip, copia para admin/downloads, gera admin/version.json,
+ * faz git commit + push (apenas local) e deploy na Vercel.
  *
  * Escopo: pasta extension/ é a fonte do build (ofuscação, ZIP, admin/downloads).
  *
  * VERSIONAMENTO SEMÂNTICO (SemVer) - AUTOMÁTICO:
- * - Por padrão: incrementa PATCH automaticamente
- * - Para MINOR: npm run build -- minor
- * - Para MAJOR: npm run build -- major
- * - Para manter: npm run build -- skip
+ * A versão é lida de package.json; o build pode incrementá-la antes de gerar o ZIP.
  *
- * Uso: npm run build (na raiz do projeto)
+ * Comportamento:
+ * - npm run build              → incrementa PATCH (ex: 5.0.0 → 5.0.1). Use para builds rotineiros.
+ * - npm run build -- minor     → incrementa MINOR e zera PATCH (5.0.1 → 5.1.0). Use para novas funcionalidades.
+ * - npm run build -- major     → incrementa MAJOR e zera MINOR/PATCH (5.1.0 → 6.0.0). Use para mudanças que quebram compatibilidade ou marcos do produto.
+ * - npm run build -- skip      → não altera a versão (útil para rebuild sem subir número).
+ *
+ * Atenção: por padrão só sobe o último número (PATCH). Se fizer muitas mudanças e quiser refletir
+ * no número (ex: 5.1.0 ou 6.0.0), rode explicitamente com -- minor ou -- major.
+ * Em ambiente Vercel (deploy), o build usa sempre skip (versão não muda no CI).
+ *
+ * Uso: npm run build [ major | minor | skip ] (na raiz do projeto)
  */
 
 const fs = require('fs');
@@ -127,8 +135,9 @@ function getVersionType() {
   const arg = (args[0] || '').toLowerCase().trim();
   if (arg === 'major') return 'major';
   if (arg === 'minor') return 'minor';
+  if (arg === 'patch') return 'patch';
   if (arg === 'skip' || arg === 'none' || arg === '0') return 'skip';
-  return 'patch';
+  return 'minor';
 }
 
 function incrementVersion(currentVersion, type) {
@@ -454,6 +463,29 @@ async function main() {
   const versionPayload = { version: newVersion, date: nowISO, publishedAt: nowISO, filename: ZIP_NAME };
   fs.writeFileSync(versionPath, JSON.stringify(versionPayload, null, 0), 'utf8');
   log('[*] admin/version.json gerado (versao ' + newVersion + ', arquivo: ' + ZIP_NAME + ').');
+
+  // Commit + push (apenas em ambiente local; na Vercel não há git push)
+  if (!process.env.VERCEL) {
+    try {
+      const { execSync } = require('child_process');
+      const gitDir = path.join(ROOT, '.git');
+      if (fs.existsSync(gitDir)) {
+        const filesToCommit = [
+          path.join(ROOT, 'package.json'),
+          path.join(EXT, 'manifest.json'),
+          versionPath,
+        ].filter(f => fs.existsSync(f));
+        if (filesToCommit.length > 0) {
+          execSync('git add package.json extension/manifest.json admin/version.json', { cwd: ROOT, stdio: 'inherit' });
+          execSync(`git commit -m "chore: build v${newVersion}"`, { cwd: ROOT, stdio: 'inherit' });
+          execSync('git push', { cwd: ROOT, stdio: 'inherit' });
+          log('[*] Git: commit e push realizados (v' + newVersion + ').');
+        }
+      }
+    } catch (err) {
+      log('[AVISO] Git commit/push falhou ou não há alterações. Execute manualmente se quiser: git add package.json extension/manifest.json admin/version.json && git commit -m "chore: build v' + newVersion + '" && git push');
+    }
+  }
 
   if (process.env.VERCEL) {
     log('\n[*] Build na Vercel: admin/downloads/ e version.json gerados. Deploy sera feito pela Vercel.');

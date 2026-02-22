@@ -46,6 +46,7 @@ Configurar em: Supabase Dashboard → Project Settings → Edge Functions → Se
 | **N8N_WEBHOOK_URL** | send-prompt, send-message | URL do webhook N8N que recebe mensagens/arquivos. |
 | **OPENROUTER_API_KEY** | enhance-prompt | Chave da API Open Router. Usada para **melhorar prompt** e **transcrição por voz** (Gemini 2.5 Flash Lite). **Nunca** colocar no código nem commitar; apenas em Secrets ou .env local (gitignored). |
 | **OPENROUTER_MODEL** | enhance-prompt (opcional) | Modelo; default: `google/gemini-2.5-flash-lite`. |
+| **ENHANCE_SYSTEM_PROMPT** | enhance-prompt (opcional) | System prompt do Enhanced (melhorar prompt). Se não definido, usa o padrão da função; a extensão pode sobrescrever por chamada enviando `system_prompt` no body. |
 
 Outros (se usados pelo código): HMAC_SIGNING_SECRET ou WEBHOOK_URL (send-message), etc.
 
@@ -61,6 +62,7 @@ Ou por função:
 ```powershell
 npx supabase functions deploy validate-license --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
 npx supabase functions deploy send-prompt --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
+npx supabase functions deploy enhance-prompt --no-verify-jwt --project-ref svjglgrxqxqtonoobcdi
 # ... demais funções
 ```
 

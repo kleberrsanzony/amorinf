@@ -29,6 +29,22 @@ module.exports = async function handler(req, res) {
 
     try {
         const supabase = getSupabase();
+
+        // 1. Remover todas as licenças cujo owner_id é este sócio (limpeza automática)
+        const { data: licensesToDelete, error: listErr } = await supabase
+            .from('licenses')
+            .select('key')
+            .eq('owner_id', uid);
+        if (!listErr && licensesToDelete && licensesToDelete.length > 0) {
+            const keys = licensesToDelete.map((r) => r.key);
+            const { error: delLicErr } = await supabase.from('licenses').delete().in('key', keys);
+            if (delLicErr) {
+                console.error('[deletePanelUser] Erro ao remover licenças do sócio:', delLicErr.message);
+                return json(res, 500, { error: 'Erro ao remover licenças do sócio. Tente novamente.' });
+            }
+        }
+
+        // 2. Remover o usuário (sócio) do Auth
         const { error } = await supabase.auth.admin.deleteUser(uid);
 
         if (error) {

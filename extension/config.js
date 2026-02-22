@@ -23,6 +23,7 @@ const CONFIG = {
     VALIDATE_LICENSE_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/validate-license',
     VERIFY_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/verify-session',
     REFRESH_SESSION_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/refresh-session',
+    // enhance-prompt: 1) melhorar texto (POST { text }) 2) transcrever áudio (POST { action: 'transcribe', audio: base64, format })
     IMPROVE_PROMPT_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt',
     TRANSCRIBE_AUDIO_ENDPOINT: 'https://svjglgrxqxqtonoobcdi.supabase.co/functions/v1/enhance-prompt'
 };

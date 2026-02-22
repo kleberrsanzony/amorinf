@@ -234,9 +234,12 @@
 
         <!-- Listagem de usuários do painel -->
         <div class="section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
                 <h2 style="margin-bottom: 0;">Usuários do painel</h2>
-                <button type="button" class="btn btn-secondary" id="btn-refresh-panel-users">Atualizar lista</button>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="btn btn-secondary" id="btn-refresh-panel-users">Atualizar lista</button>
+                    <button type="button" class="btn btn-secondary" id="btn-cleanup-orphaned-licenses" title="Remove licenças cujo dono (sócio) já foi excluído do painel">Limpar licenças de ex-sócios</button>
+                </div>
             </div>
             <div class="admin-table-wrap">
                 <table class="license-table" id="panel-users-table">

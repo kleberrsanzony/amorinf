@@ -295,6 +295,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         addMessage(text, 'system');
     }
 
+    /** Se o erro for de configuração (OPENROUTER_API_KEY), acrescenta dica de onde configurar. */
+    function formatEnhanceError(msg) {
+        if (!msg || typeof msg !== 'string') return msg;
+        const lower = msg.toLowerCase();
+        if (lower.includes('openrouter') || lower.includes('não configurad') || lower.includes('nao configurad')) {
+            return msg + ' Configure OPENROUTER_API_KEY no Supabase: Edge Functions → Secrets (https://openrouter.ai para a chave).';
+        }
+        return msg;
+    }
+
     // Create hidden file input (aceita imagens, vídeos e arquivos comuns)
     const MAX_ATTACHMENTS = 10;
     const MAX_FILE_SIZE_MB = 20;
@@ -802,53 +812,43 @@ document.addEventListener('DOMContentLoaded', async () => {
                     body: JSON.stringify({ text: text, stream: false })
                 });
                 
+                const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+                const isJson = contentType.includes('application/json');
+                const bodyText = await response.text();
                 if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    addSystemMessage(errData.error || response.statusText || 'Erro ao melhorar prompt.');
+                    let errMsg = 'Erro ao melhorar prompt.';
+                    if (bodyText) {
+                        try {
+                            const errData = JSON.parse(bodyText);
+                            if (typeof errData.error === 'string') errMsg = errData.error;
+                        } catch (_) {
+                            errMsg = bodyText.trim().slice(0, 200) || response.statusText || errMsg;
+                        }
+                    } else {
+                        errMsg = response.statusText || errMsg;
+                    }
+                    addSystemMessage(formatEnhanceError(errMsg));
                     return;
                 }
                 
-                const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
-                const isJson = contentType.includes('application/json');
                 let fullText = '';
-                
-                if (isJson) {
-                    const json = await response.json();
-                    if (json.error) {
-                        addSystemMessage(json.error);
+                if (isJson && bodyText) {
+                    let json;
+                    try {
+                        json = JSON.parse(bodyText);
+                    } catch (parseErr) {
+                        addSystemMessage('Resposta inválida do servidor.');
                         return;
                     }
-                    const msg = json.text ?? json.choices?.[0]?.message?.content ?? json.message ?? '';
-                    fullText = typeof msg === 'string' ? msg.trim() : '';
-                } else {
-                    // Stream SSE
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-                    messageInput.value = '';
-                    
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        const parts = buffer.split('\n\n');
-                        buffer = parts.pop() || '';
-                        for (const part of parts) {
-                            if (part.startsWith('data: ')) {
-                                const payload = part.slice(6).trim();
-                                if (payload === '[DONE]') continue;
-                                try {
-                                    const data = JSON.parse(payload);
-                                    const content = data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content;
-                                    if (content) {
-                                        messageInput.value += content;
-                                        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                    }
-                                } catch (_) {}
-                            }
-                        }
+                    if (json && json.error) {
+                        const errStr = typeof json.error === 'string' ? json.error : 'Erro ao melhorar prompt.';
+                        addSystemMessage(formatEnhanceError(errStr));
+                        return;
                     }
-                    fullText = messageInput.value;
+                    const msg = (json && (json.text ?? json.choices?.[0]?.message?.content ?? json.message)) ?? '';
+                    fullText = typeof msg === 'string' ? msg.trim() : '';
+                } else if (bodyText) {
+                    fullText = bodyText.trim();
                 }
                 
                 if (fullText) {
@@ -856,8 +856,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     messageInput.dispatchEvent(new Event('input', { bubbles: true }));
                     messageInput.scrollTop = messageInput.scrollHeight;
                     updateSendButtonState();
+                    messageInput.focus();
+                    addSystemMessage('Texto melhorado no campo. Revise e envie (Enter) quando quiser.');
+                } else {
+                    messageInput.focus();
+                    addSystemMessage('Nenhum texto retornado. Tente novamente.');
                 }
-                messageInput.focus();
             } catch (e) {
                 addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
             } finally {
@@ -885,8 +889,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         let voiceTimerEl = null;
         let voiceStartTime = 0;
         const VOICE_MAX_DURATION = 120000; // 2 minutos
+        const VOICE_RESULT_TIMEOUT = 35000; // se o áudio não chegar em 35s, resetar UI
         let voiceAutoStopTimeout = null;
         let voiceActiveTabId = null;
+        let voiceProcessingTimeoutId = null;
 
         function voiceUpdateTimer() {
             if (!voiceTimerEl) return;
@@ -981,22 +987,35 @@ document.addEventListener('DOMContentLoaded', async () => {
             messageInput.classList.add('improving');
             messageInput.placeholder = 'Transcrevendo áudio...';
 
+            if (voiceProcessingTimeoutId) clearTimeout(voiceProcessingTimeoutId);
+            voiceProcessingTimeoutId = setTimeout(() => {
+                voiceProcessingTimeoutId = null;
+                voiceSetState('idle');
+                messageInput.readOnly = false;
+                messageInput.classList.remove('improving');
+                messageInput.placeholder = 'Enviar mensagem...';
+                addSystemMessage('Transcrição demorou demais. Mantenha o popup aberto e tente novamente.');
+            }, VOICE_RESULT_TIMEOUT);
+
             if (voiceActiveTabId) {
                 try {
                     await chrome.tabs.sendMessage(voiceActiveTabId, { action: 'voiceStopRecording' });
                 } catch (_) {}
             }
-            // O áudio chega via 'voiceRecordingResult' pelo chrome.runtime.onMessage
         }
 
-        // Listener para receber o áudio gravado pelo content script
+        // Listener para receber o áudio gravado pelo content script (um único listener por carga do popup)
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            if (message.action !== 'voiceRecordingResult') return;
+            if (message.action !== 'voiceRecordingResult') return false;
 
             (async () => {
+                if (voiceProcessingTimeoutId) {
+                    clearTimeout(voiceProcessingTimeoutId);
+                    voiceProcessingTimeoutId = null;
+                }
                 try {
                     if (!message.success || !message.audio) {
-                        addSystemMessage(message.error || 'Erro na gravação.');
+                        addSystemMessage(message.error || 'Erro na gravação. Verifique o microfone e a aba do Lovable.');
                         return;
                     }
 
@@ -1021,19 +1040,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                         })
                     });
 
+                    const bodyText = await response.text();
                     if (!response.ok) {
-                        const errData = await response.json().catch(() => ({}));
-                        addSystemMessage(errData.error || response.statusText || 'Erro ao transcrever áudio.');
+                        let errMsg = 'Erro ao transcrever áudio.';
+                        if (bodyText) {
+                            try {
+                                const errData = JSON.parse(bodyText);
+                                if (typeof errData.error === 'string') errMsg = errData.error;
+                            } catch (_) {
+                                errMsg = bodyText.trim().slice(0, 150) || response.statusText || errMsg;
+                            }
+                        } else {
+                            errMsg = response.statusText || errMsg;
+                        }
+                        addSystemMessage(formatEnhanceError(errMsg));
                         return;
                     }
 
-                    const json = await response.json();
-                    if (json.error) {
-                        addSystemMessage(json.error);
+                    let json;
+                    try {
+                        json = bodyText ? JSON.parse(bodyText) : null;
+                    } catch (_) {
+                        addSystemMessage('Resposta inválida do servidor de transcrição.');
+                        return;
+                    }
+                    if (json && json.error) {
+                        const errStr = typeof json.error === 'string' ? json.error : 'Erro ao transcrever.';
+                        addSystemMessage(formatEnhanceError(errStr));
                         return;
                     }
 
-                    const transcribedText = (json.text || '').trim();
+                    const transcribedText = (json && json.text ? json.text : '').trim();
                     if (transcribedText) {
                         const current = messageInput.value;
                         if (current && !current.endsWith(' ') && !current.endsWith('\n')) {
@@ -1045,6 +1082,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         messageInput.scrollTop = messageInput.scrollHeight;
                         updateSendButtonState();
                         messageInput.focus();
+                        addSystemMessage('Texto no campo. Revise e envie (Enter) quando quiser.');
                     } else {
                         addSystemMessage('Nenhuma fala detectada no áudio.');
                     }
@@ -1057,6 +1095,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     messageInput.placeholder = 'Enviar mensagem...';
                 }
             })();
+            return true;
         });
 
         voiceBtn.addEventListener('click', () => {
