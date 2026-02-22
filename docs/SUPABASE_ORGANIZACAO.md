@@ -44,8 +44,10 @@ Configurar em: Supabase Dashboard → Project Settings → Edge Functions → Se
 | **PROMPTX_GATEWAY_URL** | send-prompt | URL do secure-gateway do PromptX. |
 | **PROMPTX_ANON_KEY** | send-prompt | Anon key do projeto Supabase do PromptX. |
 | **N8N_WEBHOOK_URL** | send-prompt, send-message | URL do webhook N8N que recebe mensagens/arquivos. |
+| **OPENROUTER_API_KEY** | enhance-prompt | Chave da API Open Router. Usada para **melhorar prompt** e **transcrição por voz** (Gemini 2.5 Flash Lite). **Nunca** colocar no código nem commitar; apenas em Secrets ou .env local (gitignored). |
+| **OPENROUTER_MODEL** | enhance-prompt (opcional) | Modelo; default: `google/gemini-2.5-flash-lite`. |
 
-Outros (se usados pelo código): OPENROUTER_API_KEY (enhance-prompt), HMAC_SIGNING_SECRET ou WEBHOOK_URL (send-message), etc.
+Outros (se usados pelo código): HMAC_SIGNING_SECRET ou WEBHOOK_URL (send-message), etc.
 
 ## Deploy das Edge Functions
 

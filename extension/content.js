@@ -75,6 +75,23 @@
   startObserving();
 })();
 
+// Aplicar ocultação da marca d'água ao carregar (e reaplicar para iframes que carregam depois)
+(function applyWatermarkPreferenceOnLoad() {
+  function requestApply() {
+    chrome.storage.local.get(['hideLovableWatermark'], function (data) {
+      if (data.hideLovableWatermark) {
+        chrome.runtime.sendMessage({ action: 'applyWatermarkPreference' }, function () {});
+      }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', requestApply);
+  } else {
+    requestApply();
+  }
+  setTimeout(requestApply, 2500);
+})();
+
 // Listener para mensagens do background/popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 

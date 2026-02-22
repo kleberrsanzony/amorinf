@@ -71,12 +71,18 @@ function log(msg) {
 
 function rimraf(dir) {
   if (!fs.existsSync(dir)) return;
-  fs.readdirSync(dir).forEach((entry) => {
-    const full = path.join(dir, entry);
-    if (fs.statSync(full).isDirectory()) rimraf(full);
-    else fs.unlinkSync(full);
-  });
-  fs.rmdirSync(dir);
+  // Node.js 14.14+ suporta rmSync com recursive e force
+  if (fs.rmSync) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } else {
+    // Fallback para versões mais antigas
+    fs.readdirSync(dir).forEach((entry) => {
+      const full = path.join(dir, entry);
+      if (fs.statSync(full).isDirectory()) rimraf(full);
+      else fs.unlinkSync(full);
+    });
+    fs.rmdirSync(dir);
+  }
 }
 
 function copyFileSync(src, dest) {
