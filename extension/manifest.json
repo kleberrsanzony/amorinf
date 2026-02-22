@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "Lovable Infinity",
     "short_name": "LI Prod",
-    "version": "4.0.13",
+    "version": "4.0.14",
     "description": "Gere prompts infinitos e ilimitados.",
     "permissions": [
         "activeTab",
