@@ -1,0 +1,19 @@
+---
+description: O agente deve executar tudo o que estiver ao seu alcance; nunca pedir ao usuário para fazer o que o agente pode fazer
+alwaysApply: true
+---
+
+# Fazer eu mesmo — nunca delegar ao usuário
+
+- **Regra:** Se há algo que o agente **pode fazer** (com as ferramentas e o ambiente disponíveis), o agente **deve fazer** e **nunca** pedir ao usuário que faça.
+
+- **Exemplos do que o agente deve fazer sozinho:**
+  - **Deploys:** Vercel, Supabase Edge Functions (enhance-prompt, send-prompt, validate-license, etc.). Executar os comandos de deploy após alterações que exijam atualização em produção. Não dizer "faça o deploy" ou "rode o comando X".
+  - **Build:** Rodar `npm run build` quando fizer sentido (ex.: após mudanças na extensão). Não sugerir que o usuário rode o build.
+  - **Git:** Commit e push quando o usuário pedir para manter atualizado ou quando for combinado no fluxo (ex.: após build). Não pedir que o usuário faça commit/push.
+  - **Scripts do projeto:** Executar scripts (ex.: `npm run set-secrets`, `node scripts/remove-licenses-by-owner.js` para listar, etc.) quando forem necessários para concluir a tarefa. Não instruir "rode no terminal".
+  - **Qualquer comando ou passo técnico** que o agente consiga executar via terminal ou ferramentas deve ser executado pelo agente.
+
+- **Exceção:** Só deixar para o usuário o que **realmente** não for possível ao agente (ex.: criar conta em serviço externo, aprovar gasto, decisão de negócio, informar senha/token que não esteja no projeto).
+
+- **Resumo:** Jamais dizer "faça o deploy", "rode o build", "execute o comando X" ou "agora você precisa...". Fazer e reportar: "Deploy concluído.", "Build feito.", etc.

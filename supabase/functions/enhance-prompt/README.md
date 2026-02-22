@@ -3,7 +3,7 @@
 Usada pela extensão para **Melhorar prompt** e **Transcrever áudio (voz)**. Ambos só colocam texto no campo de input; o usuário revisa e envia.
 
 - **Melhorar prompt:** `POST` com `{ "text": "..." }` (opcional: `"system_prompt": "..."` ou `"systemPrompt": "..."`) → OpenRouter (Gemini) → `{ "text": "..." }`.
-- **Transcrever áudio:** `POST` com `{ "action": "transcribe", "audio": "<base64>", "format": "webm" }` → OpenRouter (áudio) → `{ "text": "..." }`.
+- **Transcrever áudio:** `POST` com `{ "action": "transcribe", "audio": "<base64>", "format": "wav" }` (a extensão grava em WebM e converte para WAV antes de enviar; aceita também `webm` ou `mp3`) → OpenRouter (Gemini) → `{ "text": "..." }`.
 
 Modelo padrão: `google/gemini-2.5-flash-lite`.
 

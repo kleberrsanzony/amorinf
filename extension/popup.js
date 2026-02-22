@@ -295,10 +295,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         addMessage(text, 'system');
     }
 
-    /** Se o erro for de configuração (OPENROUTER_API_KEY), acrescenta dica de onde configurar. */
+    /** Traduz erros comuns da API (OpenRouter, saldo, etc.) para mensagem clara. */
     function formatEnhanceError(msg) {
         if (!msg || typeof msg !== 'string') return msg;
         const lower = msg.toLowerCase();
+        if (lower.includes('$0.50') || lower.includes('0.50 in balance') || (lower.includes('balance') && lower.includes('audio'))) {
+            return 'A transcrição por voz exige saldo na OpenRouter: adicione pelo menos US$ 0,50 em https://openrouter.ai/credits';
+        }
         if (lower.includes('openrouter') || lower.includes('não configurad') || lower.includes('nao configurad')) {
             return msg + ' Configure OPENROUTER_API_KEY no Supabase: Edge Functions → Secrets (https://openrouter.ai para a chave).';
         }
@@ -320,7 +323,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     attachBtn.addEventListener('click', () => {
         if (attachedFiles.length >= MAX_ATTACHMENTS) {
-            addSystemMessage(`Máximo de ${MAX_ATTACHMENTS} anexos atingido.`);
+            addSystemMessage('Limite de anexos.');
             return;
         }
         fileInput.click();
@@ -446,11 +449,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function addAttachment(file, dataUrl = null) {
         if (attachedFiles.length >= MAX_ATTACHMENTS) {
-            addSystemMessage(`Máximo de ${MAX_ATTACHMENTS} anexos atingido.`);
+            addSystemMessage('Limite de anexos.');
             return;
         }
         if (file && file.size > MAX_FILE_SIZE_BYTES) {
-            addSystemMessage(`Arquivo "${file.name}" excede ${MAX_FILE_SIZE_MB}MB. Máximo: ${MAX_FILE_SIZE_MB}MB por arquivo.`);
+            addSystemMessage('Arquivo muito grande.');
             return;
         }
         attachedFiles.push({ file, dataUrl });
@@ -471,14 +474,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             let skipped = 0;
             filesToAdd.forEach(f => {
                 if (f.size > MAX_FILE_SIZE_BYTES) {
-                    addSystemMessage(`"${f.name}" excede ${MAX_FILE_SIZE_MB}MB. Ignorado.`);
+                    addSystemMessage('Arquivo muito grande. Ignorado.');
                     skipped++;
                 } else {
                     addAttachment(f);
                 }
             });
             if (fileInput.files.length > remaining) {
-                addSystemMessage(`Apenas ${remaining} arquivo(s) adicionado(s). Limite de ${MAX_ATTACHMENTS} atingido.`);
+                addSystemMessage('Limite de anexos atingido.');
             }
         }
         fileInput.value = '';
@@ -502,13 +505,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const filesToAdd = Array.from(files).slice(0, remaining);
         filesToAdd.forEach(f => {
             if (f.size > MAX_FILE_SIZE_BYTES) {
-                addSystemMessage(`"${f.name}" excede ${MAX_FILE_SIZE_MB}MB. Ignorado.`);
+                addSystemMessage('Arquivo muito grande. Ignorado.');
             } else {
                 addAttachment(f);
             }
         });
         if (files.length > remaining) {
-            addSystemMessage(`Limite de ${MAX_ATTACHMENTS} anexos atingido.`);
+            addSystemMessage('Limite de anexos.');
         }
     });
 
@@ -565,7 +568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await captureData();
 
         if (!config.token || !config.projectId) {
-            addSystemMessage('Alerta: Token ou ID do projeto ausentes. Dê um refresh na página.');
+            addSystemMessage('Dê refresh na página do Lovable (F5).');
             return;
         }
 
@@ -634,21 +637,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 deviceFingerprint: deviceFingerprint || undefined
             }, (response) => {
                 if (chrome.runtime.lastError) {
-                    addSystemMessage("Erro: " + chrome.runtime.lastError.message);
+                    addSystemMessage('Erro.');
                     return;
                 }
                 if (response && response.success) {
-                    addSystemMessage('Enviado! A resposta aparecerá no Lovable.');
+                    addSystemMessage('Enviado.');
                 } else {
                     let debugInfo = '';
                     if (response && response.debug) {
                         debugInfo = `\n[DEBUG] ai_message_id: ${response.debug.ai_message_id || 'NENHUM'} | fonte: ${response.debug.source || '?'}`;
                     }
-                    addSystemMessage(`Falha: ${response?.error || 'Erro interno'}${debugInfo}`);
+                    addSystemMessage(response?.error || 'Erro ao enviar.');
                 }
             });
         } catch (error) {
-            addSystemMessage(`Erro: ${error.message}`);
+            addSystemMessage('Erro.');
         }
     }
 
@@ -684,7 +687,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         screenshotBtn.addEventListener('click', async () => {
             // Verifica se está no Lovable com projeto aberto
             if (!config.projectId) {
-                addSystemMessage('Abra um projeto no Lovable para capturar o preview.');
+                addSystemMessage('Abra um projeto no Lovable.');
                 return;
             }
 
@@ -709,12 +712,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const screenshotFile = new File([blob], `preview-${timestamp}.png`, { type: 'image/png' });
                     
                     addAttachment(screenshotFile, response.dataUrl);
-                    addSystemMessage('Screenshot capturado! Envie com sua mensagem.');
+                    addSystemMessage('Screenshot no campo.');
                 } else {
-                    addSystemMessage(response?.error || 'Não foi possível capturar o preview.');
+                    addSystemMessage(response?.error || 'Erro ao capturar.');
                 }
             } catch (error) {
-                addSystemMessage('Erro ao capturar: ' + (error.message || 'desconhecido'));
+                addSystemMessage('Erro ao capturar.');
             } finally {
                 screenshotBtn.disabled = false;
                 screenshotBtn.classList.remove('loading');
@@ -741,11 +744,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Garante que estamos em um projeto do Lovable e com token
         await captureData();
         if (!config.projectId) {
-            addSystemMessage('Abra um projeto no Lovable para baixar o código.');
+            addSystemMessage('Abra um projeto no Lovable.');
             return;
         }
         if (!config.token) {
-            addSystemMessage('Token do Lovable não encontrado. Recarregue a página do projeto.');
+            addSystemMessage('Recarregue a página (F5).');
             return;
         }
 
@@ -764,12 +767,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             if (response && response.success) {
-                addSystemMessage(response.message || 'Download do projeto iniciado!');
+                addSystemMessage(response.message || 'Download iniciado.');
             } else {
-                addSystemMessage(response?.error || 'Erro ao baixar projeto.');
+                addSystemMessage(response?.error || 'Erro ao baixar.');
             }
         } catch (e) {
-            addSystemMessage('Erro ao iniciar download do projeto: ' + (e.message || 'desconhecido'));
+            addSystemMessage('Erro ao baixar.');
         } finally {
             downloadProjectBtn.disabled = false;
             downloadProjectBtn.classList.remove('loading');
@@ -787,7 +790,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             const endpoint = (typeof CONFIG !== 'undefined' && CONFIG.IMPROVE_PROMPT_ENDPOINT) ? CONFIG.IMPROVE_PROMPT_ENDPOINT : '';
             if (!endpoint) {
-                addSystemMessage('Melhorador de prompt não configurado.');
+                addSystemMessage('Melhorador não configurado.');
                 return;
             }
             improvePromptBtn.disabled = true;
@@ -837,7 +840,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     try {
                         json = JSON.parse(bodyText);
                     } catch (parseErr) {
-                        addSystemMessage('Resposta inválida do servidor.');
+                        addSystemMessage('Resposta inválida.');
                         return;
                     }
                     if (json && json.error) {
@@ -857,13 +860,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     messageInput.scrollTop = messageInput.scrollHeight;
                     updateSendButtonState();
                     messageInput.focus();
-                    addSystemMessage('Texto melhorado no campo. Revise e envie (Enter) quando quiser.');
+                    addSystemMessage('Texto no campo. Revise e envie.');
                 } else {
                     messageInput.focus();
-                    addSystemMessage('Nenhum texto retornado. Tente novamente.');
+                    addSystemMessage('Nenhum texto. Tente de novo.');
                 }
             } catch (e) {
-                addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
+                addSystemMessage('Erro.');
             } finally {
                 improvePromptBtn.disabled = false;
                 improvePromptBtn.classList.remove('loading');
@@ -943,25 +946,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function voiceStartRecording() {
             const tab = await voiceGetLovableTab();
             if (!tab) {
-                addSystemMessage('Abra o Lovable.dev para usar a digitação por voz.');
+                addSystemMessage('Abra o Lovable.dev.');
                 return;
             }
             voiceActiveTabId = tab.id;
+            voiceSetState('processing');
+            if (voiceBtn) voiceBtn.disabled = true;
 
             try {
                 const result = await chrome.tabs.sendMessage(tab.id, { action: 'voiceStartRecording' });
                 if (!result || !result.success) {
                     if (result && result.needsPermission) {
-                        addSystemMessage('Permita o acesso ao microfone no popup que apareceu no topo da página do Lovable.');
+                        addSystemMessage('Permita o microfone na página.');
                     } else {
                         addSystemMessage(result?.error || 'Erro ao iniciar gravação.');
                     }
                     voiceSetState('idle');
+                    if (voiceBtn) voiceBtn.disabled = false;
                     return;
                 }
 
                 voiceIsRecording = true;
                 voiceSetState('recording');
+                if (voiceBtn) voiceBtn.disabled = false;
                 voiceStartTime = Date.now();
                 voiceShowTimer();
                 voiceRecordingTimer = setInterval(voiceUpdateTimer, 1000);
@@ -971,8 +978,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }, VOICE_MAX_DURATION);
 
             } catch (err) {
-                addSystemMessage('Erro ao conectar com a página. Recarregue o Lovable.dev e tente novamente.');
+                addSystemMessage('Recarregue o Lovable (F5).');
                 voiceSetState('idle');
+                if (voiceBtn) voiceBtn.disabled = false;
             }
         }
 
@@ -994,13 +1002,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 messageInput.readOnly = false;
                 messageInput.classList.remove('improving');
                 messageInput.placeholder = 'Enviar mensagem...';
-                addSystemMessage('Transcrição demorou demais. Mantenha o popup aberto e tente novamente.');
+                addSystemMessage('Transcrição demorou. Tente de novo.');
             }, VOICE_RESULT_TIMEOUT);
 
             if (voiceActiveTabId) {
                 try {
                     await chrome.tabs.sendMessage(voiceActiveTabId, { action: 'voiceStopRecording' });
-                } catch (_) {}
+                } catch (e) {
+                    voiceSetState('idle');
+                    messageInput.readOnly = false;
+                    messageInput.classList.remove('improving');
+                    messageInput.placeholder = 'Enviar mensagem...';
+                    if (voiceProcessingTimeoutId) clearTimeout(voiceProcessingTimeoutId);
+                    voiceProcessingTimeoutId = null;
+                    addSystemMessage('Recarregue o Lovable (F5).');
+                }
             }
         }
 
@@ -1015,14 +1031,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 try {
                     if (!message.success || !message.audio) {
-                        addSystemMessage(message.error || 'Erro na gravação. Verifique o microfone e a aba do Lovable.');
+                        addSystemMessage(message.error || 'Erro na gravação.');
                         return;
                     }
 
                     const endpoint = (typeof CONFIG !== 'undefined' && CONFIG.TRANSCRIBE_AUDIO_ENDPOINT)
                         ? CONFIG.TRANSCRIBE_AUDIO_ENDPOINT : '';
                     if (!endpoint) {
-                        addSystemMessage('Endpoint de transcrição não configurado.');
+                        addSystemMessage('Transcrição não configurada.');
                         return;
                     }
 
@@ -1061,7 +1077,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     try {
                         json = bodyText ? JSON.parse(bodyText) : null;
                     } catch (_) {
-                        addSystemMessage('Resposta inválida do servidor de transcrição.');
+                        addSystemMessage('Resposta inválida.');
                         return;
                     }
                     if (json && json.error) {
@@ -1082,12 +1098,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         messageInput.scrollTop = messageInput.scrollHeight;
                         updateSendButtonState();
                         messageInput.focus();
-                        addSystemMessage('Texto no campo. Revise e envie (Enter) quando quiser.');
+                        addSystemMessage('Texto no campo. Revise e envie.');
                     } else {
-                        addSystemMessage('Nenhuma fala detectada no áudio.');
+                        addSystemMessage('Nenhuma fala no áudio.');
                     }
                 } catch (e) {
-                    addSystemMessage('Erro na transcrição: ' + (e.message || 'desconhecido'));
+                    addSystemMessage('Erro na transcrição.');
                 } finally {
                     voiceSetState('idle');
                     messageInput.readOnly = false;
@@ -1120,11 +1136,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         removeWatermarkBtn.addEventListener('click', async () => {
             await captureData();
             if (!config.projectId) {
-                addSystemMessage('Abra um projeto no Lovable para remover a marca d\'água.');
+                addSystemMessage('Abra um projeto no Lovable.');
                 return;
             }
             if (!config.token) {
-                addSystemMessage('Token do Lovable não encontrado. Recarregue a página do projeto.');
+                addSystemMessage('Recarregue a página (F5).');
                 return;
             }
             removeWatermarkBtn.disabled = true;
@@ -1142,10 +1158,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (response && response.success) {
                     addSystemMessage(response.message || 'Marca d\'água removida.');
                 } else {
-                    addSystemMessage(response?.error || 'Erro ao remover marca d\'água.');
+                    addSystemMessage(response?.error || 'Erro ao remover.');
                 }
             } catch (e) {
-                addSystemMessage('Erro: ' + (e.message || 'desconhecido'));
+                addSystemMessage('Erro.');
             } finally {
                 removeWatermarkBtn.disabled = false;
                 removeWatermarkBtn.classList.remove('loading');

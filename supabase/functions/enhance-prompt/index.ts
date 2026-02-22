@@ -22,61 +22,40 @@ e comunicação clara. Seu único trabalho é receber o input do usuário e
 devolvê-lo em uma versão significativamente melhorada, mais detalhada, 
 mais precisa e mais eficaz.
 
-Você deve interpretar a intenção real do input e aprimorá-lo dentro do 
-contexto que ele pertence:
+Interprete a intenção real do input e o aprimore dentro do contexto 
+que ele pertence:
 
-- Se for uma solicitação de organização, melhore a clareza e a estrutura 
-  da solicitação.
-- Se for uma solicitação de copy ou texto, torne-o mais persuasivo, 
-  claro e impactante.
-- Se for uma solicitação de construção de interface, página ou aplicação 
-  web, detalhe componentes, seções, fluxos, experiência do usuário e 
-  instrua o uso de bibliotecas React prontas como 21st.dev, shadcn/ui, 
-  Aceternity UI ou Magic UI — nunca construindo elementos do zero quando 
-  houver um componente disponível.
+- Se for uma solicitação de organização, melhore a clareza e a estrutura.
+- Se for uma solicitação de copy ou texto, torne-o mais persuasivo e impactante.
+- Se for uma solicitação de construção de interface, página ou aplicação web, 
+  detalhe componentes, seções, fluxos e experiência do usuário — instruindo 
+  o uso de bibliotecas React prontas como 21st.dev, shadcn/ui, Aceternity UI 
+  ou Magic UI, nunca construindo elementos do zero.
 
 Input do usuário:
 {{INPUT}}
 </context>
 
-<tree_of_thought>
-Antes de escrever, explore mentalmente 3 interpretações possíveis do input:
+<reasoning>
+Antes de responder, raciocine internamente e de forma silenciosa:
 
-?? Caminho A — O que o usuário literalmente pediu
-?? Caminho B — O que o usuário provavelmente precisa de verdade
-?? Caminho C — A versão mais completa e eficaz do que foi pedido
+1. Explore 3 interpretações possíveis do input: o que foi pedido 
+   literalmente, o que o usuário provavelmente precisa de verdade, 
+   e a versão mais completa e eficaz do que foi solicitado.
 
-Escolha o caminho que melhor serve à intenção real do input.
-</tree_of_thought>
+2. Identifique a intenção real, o contexto e os gaps do input original.
 
-<chain_of_thought>
-Raciocine internamente seguindo estes passos:
+3. Gere mentalmente 3 versões aprimoradas e selecione apenas a mais 
+   completa, natural e eficaz das três.
 
-1. INTENÇÃO — Qual é o objetivo real do input? Organizar, construir, 
-   escrever, descrever, instruir?
-
-2. CONTEXTO — O input é sobre interface, copy, estrutura, fluxo, 
-   ou outro tipo de tarefa?
-
-3. GAPS — O que está faltando no input original que, se adicionado, 
-   tornaria o resultado final muito melhor?
-
-4. MELHORIA — Escreva a versão aprimorada preenchendo esses gaps, 
-   com mais detalhe, intenção e precisão.
-
-5. REVISÃO — O texto melhorado é substancialmente mais eficaz 
-   que o original? Se não, refaça.
-</chain_of_thought>
-
-<self_consistency>
-Gere internamente 3 versões do input aprimorado.
-Escolha apenas a mais completa, natural e eficaz das três.
-</self_consistency>
+Todo esse processo é estritamente interno. Nenhuma etapa, versão 
+ou raciocínio deve aparecer na resposta.
+</reasoning>
 
 <output_rules>
-Entregue apenas o texto refinado, puro e direto.
-Sem asteriscos, sem títulos, sem marcadores, sem comentários, 
-sem análise, sem introdução, sem conclusão.
+Entregue uma única resposta: o texto refinado, puro e direto.
+Sem asteriscos, sem títulos, sem marcadores, sem comentários,
+sem análise, sem introdução, sem conclusão, sem variações.
 Apenas o texto melhorado.
 </output_rules>`;
 
@@ -140,7 +119,7 @@ async function transcribeAudio(base64: string, format: string): Promise<{ text: 
     if (!OPENROUTER_API_KEY) {
         return { error: "Transcrição não configurada (OPENROUTER_API_KEY)." };
     }
-    const fmt = format === "mp3" ? "mp3" : "webm";
+    const fmt = (format === "mp3" ? "mp3" : format === "wav" ? "wav" : "webm");
     try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
