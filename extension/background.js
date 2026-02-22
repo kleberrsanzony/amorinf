@@ -111,19 +111,37 @@ npm run build
 }
 
 /**
- * Adiciona no CSS a regra que esconde o badge do Lovable (#lovable-badge).
- * Igual à imagem: vai no index.css e coloca o bloco com # (jogo da velha) antes de lovable-badge.
- * @param {string} filename - Nome do arquivo
+ * Esconde o badge do Lovable (#lovable-badge): em CSS adiciona a regra; em index.html injeta <style>.
+ * Assim o download já vem sem marca e o PUT no Lovable (remover no site) também aplica.
+ * @param {string} filename - Nome do arquivo (ex: src/index.css, index.html)
  * @param {string} content - Conteúdo do arquivo
- * @returns {string} - Conteúdo com a regra adicionada (se for .css e ainda não tiver)
+ * @returns {string} - Conteúdo com a regra aplicada
  */
 function commentOutBadgeInContent(filename, content) {
     if (typeof content !== 'string') return content;
-    if (!filename.endsWith('.css')) return content;
-    // Só adiciona o bloco se ainda não existir
-    if (content.includes('#lovable-badge')) return content;
-    const block = '\n#lovable-badge {\n    display: none !important;\n}\n';
-    return content.trimEnd() + block;
+
+    const badgeRule = '#lovable-badge { display: none !important; }';
+    const styleTag = '<style id="lovable-infinity-hide-badge">' + badgeRule + '</style>';
+
+    // 1) index.html: injeta <style> antes de </head> para garantir que o badge seja oculto ao publicar
+    if (filename === 'index.html' || filename.endsWith('/index.html')) {
+        if (content.includes('lovable-badge') && content.includes('display') && content.includes('none')) return content;
+        if (content.includes('</head>')) {
+            return content.replace('</head>', styleTag + '\n</head>');
+        }
+        if (content.includes('<head>')) {
+            return content.replace('<head>', '<head>\n' + styleTag);
+        }
+        return content;
+    }
+
+    // 2) Qualquer .css: adiciona a regra no final se ainda não existir
+    if (filename.endsWith('.css')) {
+        if (content.includes('#lovable-badge')) return content;
+        return content.trimEnd() + '\n\n/* Lovable Infinity: ocultar badge */\n' + badgeRule + '\n';
+    }
+
+    return content;
 }
 
 /**
@@ -552,63 +570,108 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
-    // Remover marca d'água no Lovable: GET código, comenta tudo do badge, PUT de volta (para publicar sem badge)
+    // Remover marca d'água no Lovable — fluxo idêntico ao PromptX 3.1: GET files/raw + POST edit-code.
     if (request.action === "removeWatermarkInLovable") {
-        const projectId = (request.projectId || '').trim();
-        const token = (request.token || '').trim();
-        if (!projectId || !token) {
-            sendResponse({ success: false, error: 'Projeto ou token ausente.' });
-            return false;
-        }
+        let projectId = (request.projectId || '').trim();
+        let token = (request.token || '').trim();
         (async () => {
+            let responded = false;
+            const safeSend = (obj) => {
+                if (responded) return;
+                responded = true;
+                clearTimeout(guard);
+                sendResponse(obj);
+            };
+            const guard = setTimeout(function () {
+                safeSend({ success: false, error: 'Não foi possível remover a marca d\'água.' });
+            }, 25000);
             try {
-                const apiUrl = `https://api.lovable.dev/projects/${projectId}/source-code`;
-                const getRes = await fetch(apiUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
+                // Usar sempre o projeto da aba ativa (evita projeto errado ao trocar de aba)
+                const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (activeTab && activeTab.url && activeTab.url.includes('lovable.dev')) {
+                    const match = activeTab.url.match(/projects\/([a-zA-Z0-9-]+)/);
+                    if (match && match[1]) projectId = match[1];
+                }
+                if (!token) {
+                    const stored = await chrome.storage.local.get(['lovable_token']);
+                    token = (stored.lovable_token || '').trim();
+                }
+                if (!projectId || !token) {
+                    safeSend({ success: false, error: 'Projeto ou token ausente. Abra a aba do projeto no Lovable e tente de novo.' });
+                    return;
+                }
+                const authHeaders = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json' };
+                const badgeRule = '\n\n#lovable-badge {\n  display: none !important;\n}\n';
+                const editUrl = `https://api.lovable.dev/projects/${projectId}/edit-code`;
+                // Vários caminhos de CSS que o Lovable pode usar
+                const cssPaths = ['src/index.css', 'index.css', 'src/App.css', 'src/styles.css'];
+                for (const cssPath of cssPaths) {
+                    const rawUrl = `https://api.lovable.dev/projects/${projectId}/files/raw?path=${encodeURIComponent(cssPath)}`;
+                    const rawCtrl = new AbortController();
+                    const rawT = setTimeout(function () { rawCtrl.abort(); }, 12000);
+                    let rawRes;
+                    try {
+                        rawRes = await fetch(rawUrl, { method: 'GET', headers: authHeaders, signal: rawCtrl.signal });
+                    } catch (rawErr) {
+                        clearTimeout(rawT);
+                        if (rawErr.name === 'AbortError') break;
+                        continue;
                     }
-                });
-                if (!getRes.ok) {
-                    if (getRes.status === 401) {
-                        sendResponse({ success: false, error: 'Token expirado. Recarregue a página do Lovable.' });
+                    clearTimeout(rawT);
+                    if (!rawRes.ok) continue;
+                    let cssText;
+                    try {
+                        cssText = await rawRes.text();
+                    } catch (_) { continue; }
+                    if (cssText.includes('#lovable-badge') && cssText.includes('display') && cssText.includes('none')) {
+                        safeSend({ success: true, message: 'Marca d\'água removida.' });
                         return;
                     }
-                    sendResponse({ success: false, error: `Erro ao obter código: ${getRes.status}` });
-                    return;
+                    const newContent = cssText.trimEnd() + badgeRule;
+                    const editBody = { changes: [{ path: cssPath, content: newContent }], uploads: [], commit_message: 'Hide Lovable badge', file_edit_type: 'CodeEdit' };
+                    const editCtrl = new AbortController();
+                    const editT = setTimeout(function () { editCtrl.abort(); }, 12000);
+                    let editRes;
+                    try {
+                        editRes = await fetch(editUrl, { method: 'POST', headers: authHeaders, body: JSON.stringify(editBody), signal: editCtrl.signal });
+                    } catch (editErr) {
+                        clearTimeout(editT);
+                        if (editErr.name === 'AbortError') break;
+                        continue;
+                    }
+                    clearTimeout(editT);
+                    if (editRes.ok) {
+                        safeSend({ success: true, message: 'Marca d\'água removida.' });
+                        return;
+                    }
                 }
-                const data = await getRes.json();
-                if (!data.files || !Array.isArray(data.files)) {
-                    sendResponse({ success: false, error: 'Resposta da API inválida.' });
-                    return;
-                }
-                // Aplica comentário do badge em todos os arquivos de texto
-                const filesToSend = data.files.map((file) => {
-                    if (file.contents == null || file.binary) return file;
-                    const commented = commentOutBadgeInContent(file.name, file.contents);
-                    return { ...file, contents: commented };
-                });
-                const putRes = await fetch(apiUrl, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ files: filesToSend })
-                });
-                if (!putRes.ok) {
-                    const errText = await putRes.text();
-                    sendResponse({
-                        success: false,
-                        error: `A API do Lovable não permitiu atualizar o código (${putRes.status}). Tente baixar o projeto e publicar o ZIP — o download já comenta o badge.`
-                    });
-                    return;
-                }
-                sendResponse({ success: true, message: 'Código do projeto atualizado: referências ao badge foram comentadas. Publique pelo Lovable para ver o resultado.' });
+                // Fallback: buscar todos os arquivos via source-code e aplicar a regra em qualquer .css
+                    try {
+                        const srcRes = await fetch(`https://api.lovable.dev/projects/${projectId}/source-code`, { method: 'GET', headers: authHeaders });
+                        if (srcRes.ok) {
+                            const srcData = await srcRes.json();
+                            if (srcData.files && Array.isArray(srcData.files)) {
+                                for (const f of srcData.files) {
+                                    if (!f.name || !f.name.toLowerCase().endsWith('.css') || f.contents == null) continue;
+                                    const text = typeof f.contents === 'string' ? f.contents : '';
+                                    if (text.includes('#lovable-badge') && text.includes('display') && text.includes('none')) {
+                                        safeSend({ success: true, message: 'Marca d\'água removida.' });
+                                        return;
+                                    }
+                                    const newContent = text.trimEnd() + badgeRule;
+                                    const editBody = { changes: [{ path: f.name, content: newContent }], uploads: [], commit_message: 'Hide Lovable badge', file_edit_type: 'CodeEdit' };
+                                    const editRes2 = await fetch(editUrl, { method: 'POST', headers: authHeaders, body: JSON.stringify(editBody) });
+                                    if (editRes2.ok) {
+                                        safeSend({ success: true, message: 'Marca d\'água removida.' });
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_) { /* ignore */ }
+                    safeSend({ success: false, error: 'Não foi possível remover a marca d\'água.' });
             } catch (e) {
-                sendResponse({ success: false, error: (e.message || 'Erro ao atualizar código.') });
+                if (!responded) safeSend({ success: false, error: 'Não foi possível remover a marca d\'água.' });
             }
         })();
         return true;

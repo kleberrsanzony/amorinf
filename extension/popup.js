@@ -1093,14 +1093,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             showDownloadOverlay('Removendo marca d\'água...');
             try {
                 const response = await new Promise((resolve) => {
+                    const t = setTimeout(() => resolve({ success: false, error: 'Não foi possível remover a marca d\'água.' }), 26000);
                     chrome.runtime.sendMessage({
                         action: 'removeWatermarkInLovable',
                         projectId: config.projectId,
                         token: config.token
-                    }, resolve);
+                    }, (r) => { clearTimeout(t); resolve(r); });
                 });
                 if (response && response.success) {
-                    addSystemMessage(response.message || 'Marca d\'água removida. Publique pelo Lovable para ver o resultado.');
+                    addSystemMessage(response.message || 'Marca d\'água removida.');
                 } else {
                     addSystemMessage(response?.error || 'Erro ao remover marca d\'água.');
                 }
