@@ -1,6 +1,6 @@
 {
     "name": "lovable-infinity",
-    "version": "5.5.0",
+    "version": "5.6.0",
     "description": "Extensão Chrome Lovable Infinity - Build e deploy",
     "scripts": {
         "build": "node scripts/build.js",
