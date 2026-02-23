@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "Lovable Infinity",
     "short_name": "Lovable Infinity",
-    "version": "5.2.0",
+    "version": "5.3.0",
     "description": "Gere prompts infinitos e ilimitados.",
     "permissions": [
         "activeTab",
