@@ -224,7 +224,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
         }
     },
     { urls: ["https://api.lovable.dev/*"] },
-    ["requestHeaders"]
+    ["requestHeaders", "extraHeaders"]
 );
 
 // Captura ai_message_id de POST /chat + payload completo de /chat e /report_error
@@ -603,73 +603,116 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 const authHeaders = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json' };
                 const badgeRule = '\n\n#lovable-badge {\n  display: none !important;\n}\n';
                 const editUrl = `https://api.lovable.dev/projects/${projectId}/edit-code`;
-                // Vários caminhos de CSS que o Lovable pode usar
-                const cssPaths = ['src/index.css', 'index.css', 'src/App.css', 'src/styles.css'];
-                for (const cssPath of cssPaths) {
-                    const rawUrl = `https://api.lovable.dev/projects/${projectId}/files/raw?path=${encodeURIComponent(cssPath)}`;
-                    const rawCtrl = new AbortController();
-                    const rawT = setTimeout(function () { rawCtrl.abort(); }, 12000);
-                    let rawRes;
-                    try {
-                        rawRes = await fetch(rawUrl, { method: 'GET', headers: authHeaders, signal: rawCtrl.signal });
-                    } catch (rawErr) {
-                        clearTimeout(rawT);
-                        if (rawErr.name === 'AbortError') break;
-                        continue;
-                    }
-                    clearTimeout(rawT);
-                    if (!rawRes.ok) continue;
-                    let cssText;
-                    try {
-                        cssText = await rawRes.text();
-                    } catch (_) { continue; }
+                let lastError = '';
+                const preferredPaths = [
+                    'src/index.css',
+                    'index.css',
+                    'app/globals.css',
+                    'src/globals.css',
+                    'src/styles/global.css',
+                    'src/App.css',
+                    'src/styles.css'
+                ];
+                const editWithContent = async (cssPath, cssText) => {
                     if (cssText.includes('#lovable-badge') && cssText.includes('display') && cssText.includes('none')) {
-                        safeSend({ success: true, message: 'Marca d\'água removida.' });
-                        return;
+                        return { ok: true, already: true };
                     }
                     const newContent = cssText.trimEnd() + badgeRule;
                     const editBody = { changes: [{ path: cssPath, content: newContent }], uploads: [], commit_message: 'Hide Lovable badge', file_edit_type: 'CodeEdit' };
                     const editCtrl = new AbortController();
                     const editT = setTimeout(function () { editCtrl.abort(); }, 12000);
-                    let editRes;
                     try {
-                        editRes = await fetch(editUrl, { method: 'POST', headers: authHeaders, body: JSON.stringify(editBody), signal: editCtrl.signal });
+                        const editRes = await fetch(editUrl, { method: 'POST', headers: authHeaders, body: JSON.stringify(editBody), signal: editCtrl.signal });
+                        clearTimeout(editT);
+                        if (editRes.ok) {
+                            return { ok: true };
+                        }
+                        const text = await editRes.text().catch(() => '');
+                        lastError = `edit-code ${editRes.status}${text ? ' - ' + text : ''}`;
+                        return { ok: false };
                     } catch (editErr) {
                         clearTimeout(editT);
-                        if (editErr.name === 'AbortError') break;
-                        continue;
+                        if (editErr.name === 'AbortError') {
+                            lastError = 'edit-code timeout';
+                        } else {
+                            lastError = editErr.message || 'edit-code error';
+                        }
+                        return { ok: false };
                     }
-                    clearTimeout(editT);
-                    if (editRes.ok) {
-                        safeSend({ success: true, message: 'Marca d\'água removida.' });
-                        return;
+                };
+                const tryRawPath = async (cssPath) => {
+                    const rawUrl = `https://api.lovable.dev/projects/${projectId}/files/raw?path=${encodeURIComponent(cssPath)}`;
+                    const rawCtrl = new AbortController();
+                    const rawT = setTimeout(function () { rawCtrl.abort(); }, 12000);
+                    try {
+                        const rawRes = await fetch(rawUrl, { method: 'GET', headers: authHeaders, signal: rawCtrl.signal });
+                        clearTimeout(rawT);
+                        if (!rawRes.ok) return { ok: false };
+                        const cssText = await rawRes.text();
+                        return await editWithContent(cssPath, cssText);
+                    } catch (rawErr) {
+                        clearTimeout(rawT);
+                        if (rawErr.name === 'AbortError') {
+                            lastError = 'files/raw timeout';
+                        }
+                        return { ok: false };
+                    }
+                };
+                let sourceFiles = null;
+                try {
+                    const srcRes = await fetch(`https://api.lovable.dev/projects/${projectId}/source-code`, { method: 'GET', headers: authHeaders });
+                    if (srcRes.ok) {
+                        const srcData = await srcRes.json();
+                        if (srcData.files && Array.isArray(srcData.files)) {
+                            sourceFiles = srcData.files;
+                        }
+                    } else {
+                        lastError = `source-code ${srcRes.status}`;
+                    }
+                } catch (e) {
+                    lastError = e.message || 'source-code error';
+                }
+                if (sourceFiles) {
+                    const normalized = sourceFiles
+                        .filter(f => f && f.name && f.name.toLowerCase().endsWith('.css'))
+                        .map(f => ({ name: f.name, contents: f.contents, sizeExceeded: f.sizeExceeded }));
+                    const byName = (name) => normalized.find(f => f.name === name);
+                    const ordered = [];
+                    for (const p of preferredPaths) {
+                        const found = byName(p);
+                        if (found) ordered.push(found);
+                    }
+                    const indexLike = normalized.find(f => f.name.endsWith('/index.css') || f.name === 'index.css');
+                    if (indexLike && !ordered.some(f => f.name === indexLike.name)) ordered.push(indexLike);
+                    for (const f of normalized) {
+                        if (!ordered.some(o => o.name === f.name)) ordered.push(f);
+                    }
+                    for (const f of ordered) {
+                        if (f.sizeExceeded || f.contents == null) {
+                            const rawAttempt = await tryRawPath(f.name);
+                            if (rawAttempt.ok) {
+                                safeSend({ success: true, message: 'Marca d\'água removida.' });
+                                return;
+                            }
+                            continue;
+                        }
+                        const text = typeof f.contents === 'string' ? f.contents : '';
+                        const editAttempt = await editWithContent(f.name, text);
+                        if (editAttempt.ok) {
+                            safeSend({ success: true, message: 'Marca d\'água removida.' });
+                            return;
+                        }
+                    }
+                } else {
+                    for (const cssPath of preferredPaths) {
+                        const rawAttempt = await tryRawPath(cssPath);
+                        if (rawAttempt.ok) {
+                            safeSend({ success: true, message: 'Marca d\'água removida.' });
+                            return;
+                        }
                     }
                 }
-                // Fallback: buscar todos os arquivos via source-code e aplicar a regra em qualquer .css
-                    try {
-                        const srcRes = await fetch(`https://api.lovable.dev/projects/${projectId}/source-code`, { method: 'GET', headers: authHeaders });
-                        if (srcRes.ok) {
-                            const srcData = await srcRes.json();
-                            if (srcData.files && Array.isArray(srcData.files)) {
-                                for (const f of srcData.files) {
-                                    if (!f.name || !f.name.toLowerCase().endsWith('.css') || f.contents == null) continue;
-                                    const text = typeof f.contents === 'string' ? f.contents : '';
-                                    if (text.includes('#lovable-badge') && text.includes('display') && text.includes('none')) {
-                                        safeSend({ success: true, message: 'Marca d\'água removida.' });
-                                        return;
-                                    }
-                                    const newContent = text.trimEnd() + badgeRule;
-                                    const editBody = { changes: [{ path: f.name, content: newContent }], uploads: [], commit_message: 'Hide Lovable badge', file_edit_type: 'CodeEdit' };
-                                    const editRes2 = await fetch(editUrl, { method: 'POST', headers: authHeaders, body: JSON.stringify(editBody) });
-                                    if (editRes2.ok) {
-                                        safeSend({ success: true, message: 'Marca d\'água removida.' });
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    } catch (_) { /* ignore */ }
-                    safeSend({ success: false, error: 'Não foi possível remover a marca d\'água.' });
+                safeSend({ success: false, error: lastError ? `Não foi possível remover a marca d'água. (${lastError})` : 'Não foi possível remover a marca d\'água.' });
             } catch (e) {
                 if (!responded) safeSend({ success: false, error: 'Não foi possível remover a marca d\'água.' });
             }
