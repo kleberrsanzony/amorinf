@@ -236,8 +236,36 @@ async function getStoredLicenseKey() {
 
 async function clearAuthentication() {
     try {
-        await chrome.storage.local.remove(['licenseKey', 'isAuthenticated', 'authTimestamp', 'userData', 'deviceFingerprint']);
+        await chrome.storage.local.remove([
+            'licenseKey',
+            'isAuthenticated',
+            'authTimestamp',
+            'userData',
+            'deviceFingerprint',
+            'sessionToken',
+            'refreshToken',
+            'sessionExpiresAt'
+        ]);
+        authDevLog('clearAuthentication executado: artefatos de auth/sessão removidos.');
     } catch (error) {}
+}
+
+function isDevEnvironment() {
+    try {
+        const manifest = chrome.runtime?.getManifest?.();
+        return !manifest?.update_url;
+    } catch (_) {
+        return false;
+    }
+}
+
+function authDevLog(message, payload) {
+    if (!isDevEnvironment()) return;
+    if (typeof payload !== 'undefined') {
+        console.log('[AUTH][DEV]', message, payload);
+        return;
+    }
+    console.log('[AUTH][DEV]', message);
 }
 
 async function initializeConfig() {

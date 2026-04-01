@@ -5,10 +5,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ============================================
     // VERIFICAÇÃO DE AUTENTICAÇÃO COM LICENÇA + JWT
     // ============================================
-    const authData = await chrome.storage.local.get(['isAuthenticated', 'licenseKey', 'sessionToken']);
+    const authData = await chrome.storage.local.get(['isAuthenticated', 'licenseKey']);
 
-    // Permite entrada com licenseKey + isAuthenticated mesmo sem sessionToken (fallback quando validate-license não retorna JWT)
     if (CONFIG.REQUIRE_LICENSE && (!authData.isAuthenticated || !authData.licenseKey)) {
+        if (typeof authDevLog === 'function') {
+            authDevLog('Sem autenticação válida no popup; redirecionando para auth.');
+        }
         window.location.href = 'auth.html';
         return;
     }
@@ -71,7 +73,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const msg = (result.message || '').toLowerCase();
                 const licenseInvalid = /inválid|expirad|desativad|não encontrad|bloquead/.test(msg);
                 if (licenseInvalid) {
-                    await chrome.storage.local.remove(['isAuthenticated', 'licenseKey', 'authTimestamp', 'userData', 'lovable_token', 'deviceFingerprint']);
+                    if (typeof clearAuthentication === 'function') {
+                        await clearAuthentication();
+                    } else {
+                        await chrome.storage.local.remove([
+                            'isAuthenticated', 'licenseKey', 'authTimestamp', 'userData',
+                            'deviceFingerprint', 'sessionToken', 'refreshToken', 'sessionExpiresAt'
+                        ]);
+                    }
+                    await chrome.storage.local.remove(['lovable_token']);
+                    if (typeof authDevLog === 'function') {
+                        authDevLog('Licença inválida detectada no popup; sessão local limpa.');
+                    }
                     window.location.href = 'auth.html';
                     return;
                 }
@@ -674,11 +687,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Sair: limpar licença/sessão e voltar para a tela de ativação
     logoutBtn.addEventListener('click', async () => {
         if (!confirm('Deseja sair e desativar a licença neste navegador?')) return;
-        await chrome.storage.local.remove([
-            'isAuthenticated', 'licenseKey', 'authTimestamp', 'userData',
-            'deviceFingerprint', 'lovable_token',
-            'sessionToken', 'refreshToken', 'sessionExpiresAt'
-        ]);
+        if (typeof clearAuthentication === 'function') {
+            await clearAuthentication();
+        } else {
+            await chrome.storage.local.remove([
+                'isAuthenticated', 'licenseKey', 'authTimestamp', 'userData',
+                'deviceFingerprint', 'sessionToken', 'refreshToken', 'sessionExpiresAt'
+            ]);
+        }
+        await chrome.storage.local.remove(['lovable_token']);
+        if (typeof authDevLog === 'function') {
+            authDevLog('Logout realizado no popup; redirecionando para auth.');
+        }
         window.location.href = 'auth.html';
     });
 
