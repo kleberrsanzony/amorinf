@@ -308,6 +308,19 @@ function formatReleaseDate(publishedAt) {
     } catch (e) { return '—'; }
 }
 
+function normalizeExtensionRelease(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    return {
+        version: payload.version != null ? payload.version : null,
+        publishedAt: payload.publishedAt != null ? payload.publishedAt : null,
+        filename: payload.filename != null ? payload.filename : null
+    };
+}
+
+function hasExtensionReleaseData(release) {
+    return !!(release && (release.version != null || release.publishedAt != null || release.filename != null));
+}
+
 function loadReleaseIntoBar(release) {
     var versionEl = document.getElementById('extension-version');
     var dateEl = document.getElementById('extension-updated-at');
@@ -335,10 +348,9 @@ async function checkExtensionRelease() {
     var release = null;
     try {
         var r = await licensesApiRequest('/api/extensionRelease');
-        if (r.ok && r.data) release = r.data;
+        if (r.ok && r.data) release = normalizeExtensionRelease(r.data);
     } catch (e) {}
-    var hasRelease = release && (release.version !== undefined || release.publishedAt !== undefined);
-    if (hasRelease) {
+    if (hasExtensionReleaseData(release)) {
         loadReleaseIntoBar(release);
         var currentKey = (release.version != null ? String(release.version) : '') + '_' + (release.publishedAt != null ? String(release.publishedAt) : '');
         if (currentKey && currentKey !== '_') {
@@ -360,8 +372,13 @@ async function checkExtensionRelease() {
         var res = await fetch('/version.json?_=' + Date.now());
         if (res.ok) {
             var fallback = await res.json();
-            if (fallback && (fallback.version != null || fallback.publishedAt != null || fallback.date != null)) {
-                loadReleaseIntoBar({ version: fallback.version, publishedAt: fallback.publishedAt || fallback.date, filename: fallback.filename });
+            var normalizedFallback = normalizeExtensionRelease({
+                version: fallback && fallback.version,
+                publishedAt: fallback && (fallback.publishedAt || fallback.date),
+                filename: fallback && fallback.filename
+            });
+            if (hasExtensionReleaseData(normalizedFallback)) {
+                loadReleaseIntoBar(normalizedFallback);
                 return;
             }
         }

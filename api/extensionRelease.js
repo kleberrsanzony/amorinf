@@ -23,7 +23,7 @@ module.exports = async function handler(req, res) {
         const data = JSON.parse(raw);
         return json(res, 200, {
             version: data.version || null,
-            publishedAt: data.date || data.publishedAt || null,
+            publishedAt: data.publishedAt || data.date || null,
             filename: data.filename || null
         });
     } catch (err) {

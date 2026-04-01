@@ -10,7 +10,7 @@ Extensão Chrome que permite prompts ilimitados no [Lovable.dev](https://lovable
 |------------|-----------|
 | **Extensão (Chrome)** | Usuário final: valida licença no Supabase, envia mensagens via Edge Function `send-prompt` → N8N → Lovable. |
 | **Painel admin** | HTML/JS em Vercel: login com Supabase Auth, CRUD de licenças e usuários do painel, download da extensão. |
-| **API (Vercel)** | Serverless: list/create/get/update/delete licenças, gestão de usuários do painel, `extensionRelease`. Autenticação via JWT (Supabase Auth). |
+| **API (Vercel)** | Serverless: list/create/get/update/delete licenças, gestão de usuários do painel e endpoint único de release `GET /api/extensionRelease` (retorna `{ version, publishedAt, filename }`). Autenticação via JWT (Supabase Auth). |
 | **Supabase** | PostgreSQL (tabela `licenses`), Auth (login do painel), Edge Functions (validate-license, send-prompt, enhance-prompt, verify-session, refresh-session, send-message). |
 
 **URLs de produção**
@@ -97,6 +97,13 @@ O build da extensão incrementa a versão (SemVer), ofusca os JS em `extension-p
 Em `chrome://extensions`, ativar "Modo do desenvolvedor" e carregar a pasta `extension-prod/` (ou o conteúdo descompactado do ZIP em `admin/downloads/`).
 
 ---
+
+
+### Endpoint oficial de release da extensão
+
+- Endpoint único: `GET /api/extensionRelease`
+- Contrato de resposta: `{ version, publishedAt, filename }`
+- Status legado: **não utilizar** `/api/publishExtensionRelease` (rota inexistente).
 
 ## Documentação
 

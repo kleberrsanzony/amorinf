@@ -75,3 +75,14 @@ No repositório atual:
 - **Usuários do painel** = Supabase Auth (auth.admin.listUsers, createUser, updateUserById, deleteUser). Exibidos na aba Administração (apenas master).
 
 Não há tabelas `clientes` ou `socios` nas migrations. Se existirem no projeto Supabase fora do repo, devem ser documentadas e incluídas no painel (nova aba ou seção) conforme decisão do produto.
+
+
+## Endpoint oficial de release da extensão
+
+No painel/admin e na API, o endpoint canônico para metadados da versão publicada da extensão é:
+
+- `GET /api/extensionRelease`
+- Resposta JSON: `{ version, publishedAt, filename }`
+
+A rota `/api/publishExtensionRelease` deve ser considerada legado/inexistente e não deve ser referenciada pelo front-end.
+
