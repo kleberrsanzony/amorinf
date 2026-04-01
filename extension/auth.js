@@ -123,7 +123,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (result.refreshToken) storageData.refreshToken = result.refreshToken;
             if (result.sessionExpiresAt) storageData.sessionExpiresAt = result.sessionExpiresAt;
 
+            // Evita reutilização silenciosa de sessão anterior quando o backend não retornar novos tokens
+            await chrome.storage.local.remove(['sessionToken', 'refreshToken', 'sessionExpiresAt']);
             await chrome.storage.local.set(storageData);
+            if (typeof authDevLog === 'function') {
+                authDevLog('Autenticação concluída em auth.js.', {
+                    hasSessionToken: Boolean(result.sessionToken),
+                    hasRefreshToken: Boolean(result.refreshToken),
+                    hasSessionExpiresAt: Boolean(result.sessionExpiresAt)
+                });
+            }
 
             // Redirecionar para a página principal após 1 segundo
             setTimeout(() => {
