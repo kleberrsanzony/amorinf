@@ -15,7 +15,6 @@ var LIST_PANEL_USERS_API_URL = API_BASE + "/api/listPanelUsers";
 var UPDATE_PANEL_USER_API_URL = API_BASE + "/api/updatePanelUser";
 var DELETE_PANEL_USER_API_URL = API_BASE + "/api/deletePanelUser";
 var CLEANUP_ORPHANED_LICENSES_API_URL = API_BASE + "/api/cleanupOrphanedLicenses";
-var PUBLISH_EXTENSION_RELEASE_API_URL = API_BASE + "/api/publishExtensionRelease";
 
 /** Supabase config */
 var SUPABASE_URL = "https://svjglgrxqxqtonoobcdi.supabase.co";
